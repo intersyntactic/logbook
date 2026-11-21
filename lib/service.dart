@@ -44,59 +44,21 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:is_logbook_format/is_logbook_format.dart';
 import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 
 import 'is_logbook.dart';
 
+export 'package:is_logbook_format/is_logbook_format.dart' show Kind;
 export 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart'
     show SocketUserReader, UserId;
 
-/// The kind of an entry: a name of letters, digits, `.`, `_` and `-`. Not
-/// `-`, which reads as "no previous entry", and not [started], which only the
-/// service writes.
-final class Kind {
-  Kind._(this.name);
-
-  final String name;
-
-  /// The kind of the entry the service adds on every start.
-  static final started = Kind._('started');
-
-  /// The kind that roots a trajectory's chain and names the one user who
-  /// may extend it (see [LogbookService]).
-  static final usersAssignedToTrajectory = Kind._(
-    'users-assigned-to-trajectory',
-  );
-
-  /// The kind that closes every chain of a mission (see [LogbookService]).
-  static final missionEnded = Kind._('mission-ended');
-
-  /// The kind that closes every chain of one trajectory (see
-  /// [LogbookService]).
-  static final trajectoryClosed = Kind._('trajectory-closed');
-
-  /// The kinds the service reads a body of, which never attach.
-  static final _serviceReadsBody = {
-    usersAssignedToTrajectory,
-    missionEnded,
-    trajectoryClosed,
-  };
-
-  static final _name = RegExp(r'^[A-Za-z0-9._-]+$');
-
-  /// [s] as a kind a sender may write; null unless it is one.
-  static Kind? parse(String s) =>
-      s != '-' && s != started.name && _name.hasMatch(s) ? Kind._(s) : null;
-
-  @override
-  bool operator ==(Object other) => other is Kind && other.name == name;
-
-  @override
-  int get hashCode => name.hashCode;
-
-  @override
-  String toString() => name;
-}
+/// The kinds the service reads a body of, which never attach.
+final _serviceReadsBody = {
+  Kind.usersAssignedToTrajectory,
+  Kind.missionEnded,
+  Kind.trajectoryClosed,
+};
 
 /// Which kinds each user may send: a line per user, the user's name or id
 /// and then the kinds, separated by spaces. Blank lines and lines starting
@@ -141,7 +103,7 @@ final class SenderTable {
       if (words.first == _attachingLabel) {
         for (final word in words.skip(1)) {
           final kind = Kind.parse(word);
-          if (kind == null || Kind._serviceReadsBody.contains(kind)) {
+          if (kind == null || _serviceReadsBody.contains(kind)) {
             throw FormatException('line ${n + 1}: $word cannot attach');
           }
           attaching.add(kind);
@@ -175,7 +137,7 @@ final class SenderTable {
       ])
         for (final word in words)
           if (Kind.parse(word) case final kind?
-              when !Kind._serviceReadsBody.contains(kind))
+              when !_serviceReadsBody.contains(kind))
             kind,
   };
 
@@ -739,7 +701,7 @@ final class _Subscriber {
   static _Subscriber? parse(Socket socket, String kinds) {
     if (kinds == '*') return _Subscriber(socket, null);
     final names = kinds.split(',');
-    return names.every((n) => n == Kind.started.name || Kind.parse(n) != null)
+    return names.every((n) => Kind.read(n) != null)
         ? _Subscriber(socket, names.toSet())
         : null;
   }
@@ -898,9 +860,7 @@ final class _Header {
     final second = bytes.indexOf(0x0a, first + 1);
     if (second < 0) return null;
     final kindText = ascii.decode(bytes.sublist(0, first), allowInvalid: true);
-    final kind = kindText == Kind.started.name
-        ? Kind.started
-        : Kind.parse(kindText);
+    final kind = Kind.read(kindText);
     final previousText = ascii.decode(
       bytes.sublist(first + 1, second),
       allowInvalid: true,

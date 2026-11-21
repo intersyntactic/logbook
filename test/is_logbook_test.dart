@@ -103,13 +103,15 @@ void main() {
     expect(Logbook.ownHash()!.hex, isNot(ownOnly.substring(0, 64)));
   });
 
-  test("the code hash covers is_unix_socket_user_check's code", () {
-    final command = readmeBlock('`dart pub get`:');
-    final without = command.replaceFirst(' is_unix_socket_user_check;', ';');
-    expect(without, isNot(command));
-    final printed = bash(without, Directory.current);
-    expect(Logbook.ownHash()!.hex, isNot(printed.substring(0, 64)));
-  });
+  for (final package in ['is_logbook_format', 'is_unix_socket_user_check']) {
+    test("the code hash covers $package's code", () {
+      final command = readmeBlock('`dart pub get`:');
+      final without = command.replaceFirst(RegExp(' $package(?=[ ;])'), '');
+      expect(without, isNot(command));
+      final printed = bash(without, Directory.current);
+      expect(Logbook.ownHash()!.hex, isNot(printed.substring(0, 64)));
+    });
+  }
 
   group('a compiled build', () {
     late Directory build;
