@@ -40,14 +40,15 @@
 /// process read them.
 ///
 /// THE CODE HASH is the [FileSetId] of the `lib/` files of this package and
-/// of the `is_content_id` and `is_unix_socket_user_check` it runs with, each
-/// path under its package's name: the sha256 of what `shasum -a 256` prints
-/// for them, so the person can compute it without running this code (the
-/// README's "Checking it" gives the command). `is_content_id` is in it
-/// because it makes every name the logbook writes, and
-/// `is_unix_socket_user_check` because it decides who the service lets
-/// write: a new version of either changes the hash, so the person sees it,
-/// whichever version an app resolves.
+/// of the `is_content_id`, `is_logbook_format` and
+/// `is_unix_socket_user_check` it runs with, each path under its package's
+/// name: the sha256 of what `shasum -a 256` prints for them, so the person
+/// can compute it without running this code (the README's "Checking it"
+/// gives the command). `is_content_id` is in it because it makes every name
+/// the logbook writes, `is_logbook_format` because it lays out every entry's
+/// bytes, and `is_unix_socket_user_check` because it decides who the
+/// service lets write: a new version of any of them changes the hash, so
+/// the person sees it, whichever version an app resolves.
 ///
 /// A compiled build has no `lib/` to hash, so it is given the hash when it
 /// is compiled, by `dart run is_logbook:code_hash`, from the source the
@@ -62,9 +63,10 @@
 /// The logbook reads that file and never writes it.
 ///
 /// It imports `dart:convert`, `dart:io`, `dart:isolate`, `dart:typed_data`
-/// and `is_content_id`, which holds the sha256 every name is made with,
-/// [ObjectId] and [FileSetId]. An import added here changes the hash like
-/// any other edit, so the person sees it.
+/// and `is_logbook_format`, which holds the entry's bytes ([LogbookEntry],
+/// [EntryHash]) and re-exports `is_content_id`, which holds the sha256 every
+/// name is made with, [ObjectId] and [FileSetId]. An import added here
+/// changes the hash like any other edit, so the person sees it.
 ///
 /// Everything is synchronous: when [Logbook.add] returns, its entry and its
 /// bytes have been written and flushed, so they outlast this process
@@ -79,68 +81,9 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
-import 'package:is_content_id/is_content_id.dart';
+import 'package:is_logbook_format/is_logbook_format.dart';
 
-export 'package:is_content_id/is_content_id.dart';
-
-/// The sha256 of one logbook entry.
-final class EntryHash extends Sha256Name {
-  EntryHash._(super.digest);
-
-  /// [entry]'s hash.
-  factory EntryHash.of(Uint8List entry) => EntryHash._(sha256(entry));
-
-  static EntryHash? parse(String s) => switch (Sha256Name.digestOfHex(s)) {
-    final d? => EntryHash._(d),
-    null => null,
-  };
-
-  static EntryHash? fromDigest(Uint8List digest) =>
-      digest.length == 32 ? EntryHash._(digest) : null;
-
-  /// What the first entry names as the entry before it: the sha256 of the
-  /// logbook format's name, so a logbook in another format breaks at its
-  /// first entry, and anyone can compute it with
-  /// `printf 'is_logbook/1' | shasum -a 256`.
-  static final origin = EntryHash.of(
-    Uint8List.fromList('is_logbook/1'.codeUnits),
-  );
-}
-
-/// One entry of a logbook, three names: `previous │ code │ object`, 32 bytes
-/// each. Whether the person approved [code] is not in it: that is read from
-/// `approved` whenever the logbook is read ([Logbook.approved]), so
-/// approving a hash covers what it already wrote and removing it takes that
-/// back.
-final class LogbookEntry {
-  const LogbookEntry(this.previous, this.code, this.object);
-
-  /// An entry's length in bytes.
-  static const length = 96;
-
-  final EntryHash previous;
-  final FileSetId code;
-  final ObjectId object;
-
-  /// [bytes] as an entry, read back; null unless they are [length] bytes.
-  static LogbookEntry? parse(Uint8List bytes) {
-    if (bytes.length != length) return null;
-    return switch ((
-      EntryHash.fromDigest(Uint8List.sublistView(bytes, 0, 32)),
-      FileSetId.fromDigest(Uint8List.sublistView(bytes, 32, 64)),
-      ObjectId.fromDigest(Uint8List.sublistView(bytes, 64, 96)),
-    )) {
-      (final p?, final c?, final o?) => LogbookEntry(p, c, o),
-      _ => null,
-    };
-  }
-
-  /// The entry's [length] bytes, as the logbook keeps them.
-  Uint8List encode() => Uint8List(length)
-    ..setAll(0, previous.bytes)
-    ..setAll(32, code.bytes)
-    ..setAll(64, object.bytes);
-}
+export 'package:is_logbook_format/is_logbook_format.dart' hide Kind;
 
 /// What [Logbook.check] found.
 sealed class LogbookCheck {
@@ -318,8 +261,8 @@ final class Logbook {
     _claim.closeSync();
   }
 
-  /// The hash of this package's `lib/`, `is_content_id`'s and
-  /// `is_unix_socket_user_check`'s, as the library
+  /// The hash of this package's `lib/`, `is_content_id`'s,
+  /// `is_logbook_format`'s and `is_unix_socket_user_check`'s, as the library
   /// comment computes it. Null when it cannot be computed exactly that way:
   /// the source is not on disk, as in a compiled build; a `lib/` holds a
   /// link, which `find` and this code would walk differently; or a file's
@@ -330,6 +273,7 @@ final class Logbook {
     for (final package in const [
       'is_content_id',
       'is_logbook',
+      'is_logbook_format',
       'is_unix_socket_user_check',
     ]) {
       if (!_listLib(package, files)) return null;
