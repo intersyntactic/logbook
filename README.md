@@ -82,13 +82,13 @@ relative directory is resolved when the logbook opens.
 ## Checking it
 
 The code hash is the sha256 of what `shasum -a 256` prints for the `lib/`
-files of this package and of the `is_content_id` and
+files of this package and of the `is_content_id`, `is_logbook_format` and
 `is_unix_socket_user_check` it runs with, each path under its package's
 name, so it can be checked without running any of its
 code. From the root of this package, or of an app that uses it, after
 `dart pub get`:
 
-    (cd .dart_tool && for p in is_content_id is_logbook is_unix_socket_user_check; do
+    (cd .dart_tool && for p in is_content_id is_logbook is_logbook_format is_unix_socket_user_check; do
       r=$(sed -n "/\"name\": \"$p\"/{n;s|.*\"rootUri\": \"\(file://\)\{0,1\}\(.*\)\",|\2|p;}" package_config.json)
       (cd "$r/lib" && find . -type f -name '*.dart' -print0 | LC_ALL=C sort -z |
         xargs -0 shasum -a 256 | sed "s|  \./|  ./$p/|")
@@ -273,10 +273,18 @@ closes it after `tip` and `get`.
 ## What it imports
 
 `dart:convert`, `dart:io`, `dart:isolate`, `dart:typed_data` and
-[`is_content_id`](https://pub.dev/packages/is_content_id), which holds
-`ObjectId`, `FileSetId` and the sha256 every name is made with. The logbook
-re-exports it, and its code is in the code hash, so a new version of it
-changes the hash.
+[`is_logbook_format`](https://pub.dev/packages/is_logbook_format), which
+holds the entry's bytes (`LogbookEntry`, `EntryHash`) and `Kind`, and
+re-exports [`is_content_id`](https://pub.dev/packages/is_content_id), which
+holds `ObjectId`, `FileSetId` and the sha256 every name is made with. The
+logbook re-exports both, and their code is in the code hash, so a new
+version of either changes the hash.
+
+A program that only talks to the service should depend on
+`is_logbook_format` (or
+[`is_logbook_client`](https://pub.dev/packages/is_logbook_client)), not on
+this package: depending on the writer lets it open the logbook's directory
+and append past the service.
 
 The service also imports
 [`is_unix_socket_user_check`](https://pub.dev/packages/is_unix_socket_user_check),

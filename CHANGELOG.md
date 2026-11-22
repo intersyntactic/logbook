@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1
+
+- **The format moved to
+  [`is_logbook_format`](https://pub.dev/packages/is_logbook_format)**:
+  `LogbookEntry`, `EntryHash` and `Kind`, unchanged. This package
+  re-exports them where they were (`Kind` from `service.dart`, the rest
+  from `is_logbook.dart`), so nothing that imports them changes. A program
+  that only talks to the service, such as `is_logbook_client`, can now
+  depend on the format without depending on the writer, which let it
+  open the logbook's directory and append past the service.
+- `Kind.read` names the rule the service wrote out twice: a recorded kind
+  is `started` or one `Kind.parse` takes.
+- **The code hash covers `is_logbook_format`**, which lays out every
+  entry's bytes. The README's command hashes it too. The approved code
+  hash changes with this release.
+
 ## 0.3.0
 
 - **Breaking: users are `UserId`s**, from
