@@ -22,7 +22,7 @@
 ///
 /// The service reads the sender's user from the socket, as the kernel
 /// reports it, never from the request. On every start it adds an entry of
-/// kind `started` holding the sender table in force, so the record shows
+/// kind `started` holding the sender table in force, so the logbook shows
 /// who was allowed to write what. Each `started` names the one before it as
 /// previous, so no two are the same bytes. Which names exist is the table's to say,
 /// and every kind means nothing to the service but two.

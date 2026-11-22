@@ -69,7 +69,7 @@
   are the same bytes.
 - The 96-byte format and `is_logbook/1` are unchanged; a logbook written by
   0.1.0's service names 96-byte hashes in its headers, which 0.2.0 does not
-  read as ids, so a live record starts empty again.
+  read as ids, so a live logbook starts empty again.
 - The code hash changes: `lib/service.dart` changed.
 
 ## 0.1.0
@@ -84,7 +84,7 @@ The first release as is_logbook. Up to 0.9.0 this package was
   `is_logbook:code_hash`, and the define a compiled build names its code
   with `is_logbook.code`.
 - **Breaking: the format is `is_logbook/1`.** The first entry names the
-  sha256 of `is_logbook/1` as the entry before it, so no record written by
+  sha256 of `is_logbook/1` as the entry before it, so no logbook written by
   is_journal chains here. None is carried over: a logbook starts empty.
 - **Breaking: the service reads `LOGBOOK_DIR`, `LOGBOOK_SOCKET`,
   `LOGBOOK_SENDERS` and `LOGBOOK_READ_SOCKET`**, and no longer the
@@ -100,7 +100,7 @@ The first release as is_logbook. Up to 0.9.0 this package was
 - Refusals renamed with them: an entry on an ended mission's chain is
   refused `mission-ended <mission>`, and a body that names no mission
   `mission-ended-body`. `users-assigned-again` now names the trajectory.
-- No entry of the old kinds was ever written to a live record, and the
+- No entry of the old kinds was ever written to a live logbook, and the
   readers don't accept the old names: each reader reads one version.
 - Sender tables naming the old kinds must change in the same deploy.
 - No kind is newly reserved: only `-` and `started` are refused by
@@ -115,7 +115,7 @@ The first release as is_logbook. Up to 0.9.0 this package was
   `users-assigned-to-journey-path`, and `ended` is now `journey-ended`.
   The old names are no longer special: a sender table may list them as
   ordinary kinds. No entry of either old kind was ever written to a live
-  record, so nothing has to read them.
+  logbook, so nothing has to read them.
 - Refusals renamed with them: `assigned-body`, `assigned-not-root` and
   `assigned-again` are now `users-assigned-body`,
   `users-assigned-not-root` and `users-assigned-again`; `ended-body` is

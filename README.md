@@ -160,8 +160,10 @@ covered against crashes, and a power cut on the logbook's machine is rare
 enough to accept a reported hole. What closing it would take, measured, is in
 [issue 13](https://github.com/intersyntactic/logbook/issues/13).
 
-    LOGBOOK_DIR=/var/lib/record LOGBOOK_SOCKET=/run/record/logbook.sock \
-      LOGBOOK_SENDERS=/etc/record/senders dart run is_logbook:service
+    LOGBOOK_DIR=/var/lib/intersyntactic-logbook \
+      LOGBOOK_SOCKET=/run/intersyntactic-logbook/logbook.sock \
+      LOGBOOK_SENDERS=/etc/intersyntactic-logbook/senders \
+      dart run is_logbook:service
 
 The sender table has one line per user, then the kinds that user may send:
 
