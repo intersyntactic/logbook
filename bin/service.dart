@@ -1,8 +1,9 @@
 /// Runs a logbook's one writer (see `package:is_logbook/service.dart`):
 ///
-///     LOGBOOK_DIR=/var/lib/record LOGBOOK_SOCKET=/run/record/logbook.sock \
-///       LOGBOOK_SENDERS=/etc/record/senders \
-///       LOGBOOK_READ_SOCKET=/run/record-read/logbook.sock \
+///     LOGBOOK_DIR=/var/lib/intersyntactic-logbook \
+///       LOGBOOK_SOCKET=/run/intersyntactic-logbook/logbook.sock \
+///       LOGBOOK_SENDERS=/opt/intersyntactic-logbook/current/etc/senders \
+///       LOGBOOK_READ_SOCKET=/run/intersyntactic-logbook-read/logbook.sock \
 ///       dart run is_logbook:service
 ///
 /// `LOGBOOK_READ_SOCKET` is optional: without it, nothing can read through
