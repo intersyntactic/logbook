@@ -2,7 +2,7 @@
 ///
 ///     LOGBOOK_DIR=/var/lib/intersyntactic-logbook \
 ///       LOGBOOK_SOCKET=/run/intersyntactic-logbook/logbook.sock \
-///       LOGBOOK_SENDERS=/etc/intersyntactic-logbook/senders \
+///       LOGBOOK_SENDERS=/opt/intersyntactic-logbook/current/etc/senders \
 ///       LOGBOOK_READ_SOCKET=/run/intersyntactic-logbook-read/logbook.sock \
 ///       dart run is_logbook:service
 ///

@@ -162,7 +162,7 @@ enough to accept a reported hole. What closing it would take, measured, is in
 
     LOGBOOK_DIR=/var/lib/intersyntactic-logbook \
       LOGBOOK_SOCKET=/run/intersyntactic-logbook/logbook.sock \
-      LOGBOOK_SENDERS=/etc/intersyntactic-logbook/senders \
+      LOGBOOK_SENDERS=/opt/intersyntactic-logbook/current/etc/senders \
       dart run is_logbook:service
 
 The sender table has one line per user, then the kinds that user may send:
