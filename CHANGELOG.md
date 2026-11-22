@@ -11,6 +11,13 @@
   `users-assigned-to-trajectory` naming one (`refused no-user ...`). The
   kernel reports a user unmapped in the service's user namespace as 65534,
   so such a line used to let in every unmapped user.
+- **Upgrading from 0.2.x: a trajectory whose loop user is 65534 or
+  `nobody` can no longer be extended.** Its `users-assigned-to-trajectory`
+  was accepted before, but the user is read back on every start and is
+  now no user, so every entry on its chains is refused `not-owner`. That
+  is the point: under 0.2.x every unmapped user could extend it. A suit
+  of 65534 or `nobody` changes nothing, since only the loop user writes.
+  Before upgrading, look for an assignment naming either.
 - Who is on the other end of the socket is read by `SocketUserReader`,
   which `LogbookService.start` takes as `socketUserReader` (the running
   kernel's by default), so a test can fake any user.
