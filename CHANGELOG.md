@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.2
+
+- **`pubspec.lock` is committed**, so the service a tag deploys is built
+  from the same dependency versions every time (`dart pub get
+  --enforce-lockfile`). No code changed, and the code hash is the same as
+  0.3.1's: the lock is outside `lib/`, and it pins `is_content_id` 0.2.0,
+  `is_logbook_format` 0.1.0 and `is_unix_socket_user_check` 0.1.0, the
+  versions 0.3.1 is approved with. A package that depends on `is_logbook`
+  still resolves its own versions; pub ignores a dependency's lock.
+
 ## 0.3.1
 
 - **The format moved to
