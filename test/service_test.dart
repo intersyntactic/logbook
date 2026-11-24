@@ -954,16 +954,18 @@ void main() {
       overflowUid: () => 65534,
     );
 
-    Future<void> startAs(int uid) async {
+    Future<void> startWith(SocketUserReader reader) async {
       await service.close();
       service = await LogbookService.start(
         Logbook.open(dir)!,
         SenderTable.parse(bytesOf('5001 turn\n')),
         socket,
         readSocket: readSocket,
-        socketUserReader: socketUserIs(uid),
+        socketUserReader: reader,
       );
     }
+
+    Future<void> startAs(int uid) => startWith(socketUserIs(uid));
 
     test('is who the reader it is given says', () async {
       await startAs(5001);
@@ -979,15 +981,50 @@ void main() {
     });
 
     test(
-      'is unknown, and refused, when it reads as the overflow uid',
+      'is unknown, and refused with why, when it reads as the overflow uid',
       () async {
         await startAs(65534);
         expect(
           await send(socket, 'turn\n-\nhello'),
-          'refused kind turn for user unknown',
+          'refused kind turn for user unknown: '
+          'the kernel reported the overflow uid 65534',
         );
       },
     );
+
+    test(
+      'is unknown, and refused with why, when the kernel answers short',
+      () async {
+        await startWith(
+          SocketUserReader(
+            kernel: Kernel.linux,
+            readOption: (_, _) => Uint8List(4),
+            overflowUid: () => 65534,
+          ),
+        );
+        expect(
+          await send(socket, 'turn\n-\nhello'),
+          'refused kind turn for user unknown: '
+          'the kernel answered 4 bytes of a 12-byte struct',
+        );
+      },
+    );
+
+    test('is refused on one line when why spans several', () async {
+      await startWith(
+        SocketUserReader(
+          kernel: Kernel.linux,
+          readOption: (_, _) =>
+              throw const SocketException('first line\nsecond line'),
+          overflowUid: () => 65534,
+        ),
+      );
+      expect(
+        await send(socket, 'turn\n-\nhello'),
+        'refused kind turn for user unknown: reading the peer credentials '
+        'failed: SocketException: first line second line',
+      );
+    });
   });
 
   group('the sender table', () {

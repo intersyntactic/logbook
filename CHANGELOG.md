@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0
+
+- **Depends on `is_unix_socket_user_check` ^0.2.0**, whose reader says why
+  it could not name the user on the other end of a socket. A program that
+  depends on `is_logbook` can now move to 0.2.0 too.
+- **A write whose user the kernel did not name is refused with why**, on
+  one line: `refused kind <kind> for user unknown: <why>`, for example
+  `... unknown: the kernel reported the overflow uid 65534`. It used to end
+  at `unknown`. It is still refused in every such case.
+- A subscription holds its kinds as `Kind`s, read once when it is parsed.
+- **The code hash changes**, because `is_unix_socket_user_check` is in it:
+  `09064cbe199733ce67abd2ef97eeb8e1f2b421e00ceb0c9fd9423d728f93ad72`.
+
 ## 0.3.2
 
 - **`pubspec.lock` is committed**, so the service a tag deploys is built
