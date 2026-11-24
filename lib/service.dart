@@ -501,7 +501,7 @@ final class LogbookService {
   }
 
   Future<void> _serve(Socket socket) async {
-    final user = _socketUserReader.userOf(socket);
+    final reading = _socketUserReader.read(socket);
     final request = BytesBuilder(copy: false);
     var tooLarge = false;
     try {
@@ -514,7 +514,7 @@ final class LogbookService {
       }
       final answer = tooLarge
           ? 'refused too-large'
-          : _answer(user, request.takeBytes());
+          : _answer(reading, request.takeBytes());
       socket.add(utf8.encode('$answer\n'));
       await socket.close();
     } on SocketException {
@@ -522,16 +522,24 @@ final class LogbookService {
     }
   }
 
-  /// Checks [request] from [user], null when the kernel does not name one,
-  /// and adds it, all in one
+  /// Checks [request] from the user in [reading] and adds it, all in one
   /// synchronous step, so no other request comes between the check and the
-  /// add.
-  String _answer(UserId? user, Uint8List request) {
+  /// add. A request whose user the kernel did not name is refused with why,
+  /// on one line.
+  String _answer(SocketUserReading reading, Uint8List request) {
     final header = _Header.parse(request);
     if (header == null) return 'refused no-header';
     final Kind(:name) = header.kind;
-    if (user == null || !_senders.allows(user, header.kind)) {
-      return 'refused kind $name for user ${user ?? 'unknown'}';
+    final UserId user;
+    switch (reading) {
+      case UserRead(user: final read):
+        user = read;
+      case Unread(:final why):
+        final oneLine = '$why'.replaceAll(RegExp(r'[\r\n]+'), ' ');
+        return 'refused kind $name for user unknown: $oneLine';
+    }
+    if (!_senders.allows(user, header.kind)) {
+      return 'refused kind $name for user $user';
     }
     final entry = ObjectId.of(request);
     if (_entries.containsKey(entry)) return 'refused duplicate ${entry.hex}';
@@ -696,17 +704,21 @@ final class _Subscriber {
   _Subscriber(this.socket, this.kinds);
 
   final Socket socket;
-  final Set<String>? kinds;
+  final Set<Kind>? kinds;
 
+  /// `*`, or kind names joined by commas; null when any name is no kind.
   static _Subscriber? parse(Socket socket, String kinds) {
     if (kinds == '*') return _Subscriber(socket, null);
-    final names = kinds.split(',');
-    return names.every((n) => Kind.read(n) != null)
-        ? _Subscriber(socket, names.toSet())
-        : null;
+    final read = <Kind>{};
+    for (final name in kinds.split(',')) {
+      final kind = Kind.read(name);
+      if (kind == null) return null;
+      read.add(kind);
+    }
+    return _Subscriber(socket, read);
   }
 
-  bool wants(Kind kind) => kinds?.contains(kind.name) ?? true;
+  bool wants(Kind kind) => kinds?.contains(kind) ?? true;
 }
 
 /// Where a subscription starts: the logbook's start, or just after an entry.
