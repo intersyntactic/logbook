@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1
+
+- **Depends on `is_unix_socket_user_check` ^0.2.1**, which prints every
+  reason a user could not be read on one line, folding any line break into
+  a space. The service passes the reason on as it is, rather than folding
+  `\r` and `\n` itself, so a refusal stays one line whatever line break the
+  operating system's error holds. A program that depends on `is_logbook`
+  now gets 0.2.1 or later.
+- **The code hash changes**:
+  `f380b8822a153e102f8bef83d2dd4774c22d1b22e105e08471ea87aa179b9b58`.
+
 ## 0.4.0
 
 - **Depends on `is_unix_socket_user_check` ^0.2.0**, whose reader says why

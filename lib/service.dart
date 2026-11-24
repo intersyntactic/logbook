@@ -525,7 +525,7 @@ final class LogbookService {
   /// Checks [request] from the user in [reading] and adds it, all in one
   /// synchronous step, so no other request comes between the check and the
   /// add. A request whose user the kernel did not name is refused with why,
-  /// on one line.
+  /// which `WhyUnread` prints on one line.
   String _answer(SocketUserReading reading, Uint8List request) {
     final header = _Header.parse(request);
     if (header == null) return 'refused no-header';
@@ -535,8 +535,7 @@ final class LogbookService {
       case UserRead(user: final read):
         user = read;
       case Unread(:final why):
-        final oneLine = '$why'.replaceAll(RegExp(r'[\r\n]+'), ' ');
-        return 'refused kind $name for user unknown: $oneLine';
+        return 'refused kind $name for user unknown: $why';
     }
     if (!_senders.allows(user, header.kind)) {
       return 'refused kind $name for user $user';
