@@ -101,7 +101,9 @@ yours, such as when you checked it. Every entry names the code that wrote it,
 so which entries came from code you checked is read from `approved` whenever
 the logbook is read (`approved()`), never written into the entries: approving
 a hash covers what it already wrote, and deleting its line takes that back.
-The logbook reads `approved` and never writes it.
+The logbook reads `approved` and never writes it. The service says at start
+whether its own hash is there: `code <hash> approved`, or
+`code <hash> NOT approved`, which is a warning and never stops it.
 
 `Logbook.open` returns null when the logbook cannot compute its hash the way
 that command does: when `lib/` holds a link or a file name `shasum` would

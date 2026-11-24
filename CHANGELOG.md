@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.2
+
+- **The service prints its code hash at start**, after the line saying
+  where it writes and listens: `code <hash> approved` when the hash is a
+  line of `approved`, or `code <hash> NOT approved` when it isn't. It is a
+  warning, not a refusal, so a missing line never stops the writer. A
+  deploy can now be checked against what the person approved from the
+  start log alone.
+- **A stop sent once the start lines are out closes the service
+  cleanly.** It now watches SIGTERM and SIGINT before printing them; before,
+  a signal in that gap killed it without closing the sockets.
+- **The code hash is unchanged**:
+  `f380b8822a153e102f8bef83d2dd4774c22d1b22e105e08471ea87aa179b9b58`.
+  Only `bin/` changed, and the hash covers `lib/`.
+
 ## 0.4.1
 
 - **Depends on `is_unix_socket_user_check` ^0.2.1**, which prints every
