@@ -9,6 +9,10 @@
 /// `LOGBOOK_READ_SOCKET` is optional: without it, nothing can read through
 /// the service.
 ///
+/// Once listening, it prints where it writes and listens, then
+/// `code <hash> approved` or `code <hash> NOT approved`: whether its code
+/// hash is a line of the logbook's `approved` file.
+///
 /// Exits 78 when it cannot start as configured, and closes cleanly on
 /// SIGTERM or SIGINT.
 library;
@@ -47,16 +51,23 @@ Future<void> main() async {
     logbook.close();
     _fail('$e');
   }
-  stdout.writeln(
-    'writing $dir, listening on $socket'
-    '${readSocket == null ? '' : ', readers on $readSocket'}',
-  );
+  // Watched before the start lines, so a stop sent once they are seen
+  // closes the service cleanly instead of killing it.
   final stop = Completer<void>();
   for (final signal in [ProcessSignal.sigterm, ProcessSignal.sigint]) {
     signal.watch().listen((_) {
       if (!stop.isCompleted) stop.complete();
     });
   }
+  stdout.writeln(
+    'writing $dir, listening on $socket'
+    '${readSocket == null ? '' : ', readers on $readSocket'}',
+  );
+  // A warning, never a refusal: a missing line must not stop every writer.
+  final approved = logbook.approved().contains(logbook.codeHash);
+  stdout.writeln(
+    'code ${logbook.codeHash} ${approved ? 'approved' : 'NOT approved'}',
+  );
   await stop.future;
   await service.close();
   exit(0);
