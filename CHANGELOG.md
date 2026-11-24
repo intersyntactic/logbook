@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.3
+
+- **Everything the service does is now in `lib/`, so the code hash covers
+  it.** The new `package:is_logbook/run_service.dart` holds
+  `runLogbookService(env, {out, err, stop})`, which returns the exit code
+  (0, or `cannotStart`, 78), and `bin/service.dart` is one line that calls
+  it and exits. Before, `bin/service.dart` read the settings, opened the
+  logbook and handled the stop signals outside the hash, and it could have
+  added any entry stamped with an approved hash.
+- **The README says exactly what the hash covers**: the `lib/` folders,
+  not `bin/`, the program around the library or the compiler.
+- **The code hash changes**:
+  `104d3dcad26b6134d6d996c2c411d228af56c65cbff2116c8009c7fd253b52f2`.
+
 ## 0.4.2
 
 - **The service prints its code hash at start**, after the line saying

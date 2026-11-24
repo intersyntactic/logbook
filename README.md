@@ -94,6 +94,14 @@ code. From the root of this package, or of an app that uses it, after
         xargs -0 shasum -a 256 | sed "s|  \./|  ./$p/|")
     done | shasum -a 256)
 
+The hash covers `lib/` and nothing else: not `bin/`, not the program that
+calls the library, not the compiler. Approving a hash says the code in those
+`lib/` folders was reviewed. Everything the service does is in `lib/`
+(`run_service.dart`); `bin/service.dart` is one line that calls it and
+exits, so check that line by eye. A program that embeds this package is
+covered only as far as these `lib/` folders: its own code could write any
+entry, stamped with this package's hash.
+
 The logbook computes the same hash from its own source when it opens. Add the
 hash you checked to `approved` beside the entries, one per line: the line
 `shasum` prints will do as it is, and anything after the hash on its line is
