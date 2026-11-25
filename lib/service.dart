@@ -283,6 +283,7 @@ final class LogbookService {
     await _server.close();
     await _readServer?.close();
     for (final subscriber in _subscribers.toList()) {
+      subscriber.dropped = true;
       subscriber.socket.destroy();
     }
     _subscribers.clear();
@@ -338,8 +339,8 @@ final class LogbookService {
     _order.add(_Indexed(entry, header));
   }
 
-  /// Indexes and links [bytes], just added as the 96 bytes [link], and sends
-  /// them to the readers subscribed to their kind.
+  /// Indexes and links [bytes], just added as the 96 bytes [link], and moves
+  /// each subscriber on to it.
   void _added(EntryHash link, _Header header, Uint8List bytes) {
     final entry = ObjectId.of(bytes);
     final raw = LogbookEntry(_head, logbook.codeHash, entry).encode();
@@ -353,10 +354,8 @@ final class LogbookService {
       // Something else wrote to the logbook since: read it all back.
       _load();
     }
-    for (final subscriber in _subscribers) {
-      if (subscriber.wants(header.kind)) {
-        _send(subscriber.socket, entry, header, bytes);
-      }
+    for (final subscriber in _subscribers.toList()) {
+      _pump(subscriber);
     }
   }
 
@@ -587,8 +586,52 @@ extension on LogbookService {
   }
 
   void _drop(Socket socket) {
-    _subscribers.removeWhere((f) => f.socket == socket);
+    _subscribers.removeWhere((subscriber) {
+      if (subscriber.socket != socket) return false;
+      subscriber.dropped = true;
+      return true;
+    });
     socket.destroy();
+  }
+
+  /// Sends [subscriber] the entries it wants from its place in the order, a
+  /// batch at a time, and the next batch only once the last has gone to the
+  /// reader: a reader that stops reading holds one batch here, no more. Says
+  /// `caught-up` the first time it reaches the end.
+  void _pump(_Subscriber subscriber) {
+    if (subscriber.sending || subscriber.dropped) return;
+    final socket = subscriber.socket;
+    var at = subscriber.nextIn(_at);
+    var batch = 0;
+    while (at < _order.length && batch < _Subscriber.batchBytes) {
+      final indexed = _order[at++];
+      subscriber.pass(indexed.entry, at);
+      if (!subscriber.wants(indexed.header.kind)) continue;
+      final Uint8List? bytes;
+      try {
+        bytes = logbook.get(indexed.entry);
+      } on CorruptObject {
+        continue;
+      }
+      if (bytes != null) {
+        batch += _send(socket, indexed.entry, indexed.header, bytes);
+      }
+    }
+    if (at == _order.length && !subscriber.caughtUp) {
+      subscriber.caughtUp = true;
+      final head = _order.isEmpty ? 'start' : _order.last.entry.hex;
+      final line = utf8.encode('caught-up $head\n');
+      socket.add(line);
+      batch += line.length;
+    }
+    if (batch == 0) return;
+    // Dart refuses an add while a flush is running, so nothing more is sent
+    // until this batch has gone.
+    subscriber.sending = true;
+    socket.flush().then((_) {
+      subscriber.sending = false;
+      _pump(subscriber);
+    }, onError: (Object _) => _drop(socket));
   }
 
   /// `get <entry>`, `tip <entry>`, or `subscribe <kinds> from <entry>`:
@@ -611,28 +654,16 @@ extension on LogbookService {
       case ['subscribe', final kinds, 'from', final after]
           when _Subscriber.parse(socket, kinds) != null &&
               _SubscribeFrom.parse(after) != null:
-        final skip = switch (_SubscribeFrom.parse(after)!) {
-          _FromStart() => 0,
-          _FromAfter(:final entry) => switch (_at[entry]) {
-            final at? => at + 1,
-            null => null,
-          },
-        };
-        if (skip == null) return refuse('unknown $after');
         final subscriber = _Subscriber.parse(socket, kinds)!;
-        // Sent, marked and registered in one synchronous step, so no entry
-        // added meanwhile is missed, sent twice, or lands unseen between
-        // the backlog and the live entries.
-        for (final indexed in _order.skip(skip)) {
-          if (!subscriber.wants(indexed.header.kind)) continue;
-          final bytes = logbook.get(indexed.entry);
-          if (bytes != null) {
-            _send(socket, indexed.entry, indexed.header, bytes);
-          }
+        if (_SubscribeFrom.parse(after)! case _FromAfter(:final entry)) {
+          final at = _at[entry];
+          if (at == null) return refuse('unknown $after');
+          subscriber.pass(entry, at + 1);
         }
-        final head = _order.isEmpty ? 'start' : _order.last.entry.hex;
-        socket.add(utf8.encode('caught-up $head\n'));
+        // The backlog and the live entries are one walk through the order,
+        // so none is missed or sent twice.
         _subscribers.add(subscriber);
+        _pump(subscriber);
       case _:
         refuse('not-a-request');
     }
@@ -678,16 +709,17 @@ extension on LogbookService {
 }
 
 /// Writes one entry to a reader: `entry <id> <kind> <previous> <length>`,
-/// a newline, and its bytes exactly as recorded.
-void _send(Socket socket, ObjectId entry, _Header header, Uint8List bytes) {
+/// a newline, and its bytes exactly as recorded. Returns how many bytes
+/// that is.
+int _send(Socket socket, ObjectId entry, _Header header, Uint8List bytes) {
+  final line = utf8.encode(
+    'entry ${entry.hex} ${header.kind} ${header.previous?.hex ?? '-'} '
+    '${bytes.length}\n',
+  );
   socket
-    ..add(
-      utf8.encode(
-        'entry ${entry.hex} ${header.kind} ${header.previous?.hex ?? '-'} '
-        '${bytes.length}\n',
-      ),
-    )
+    ..add(line)
     ..add(bytes);
+  return line.length + bytes.length;
 }
 
 /// An entry the service knows: its id and its header.
@@ -698,12 +730,48 @@ final class _Indexed {
   final _Header header;
 }
 
-/// A reader subscribed to [kinds] (null for every kind) on [socket].
+/// A reader subscribed to [kinds] (null for every kind) on [socket], and how
+/// far through the logbook's order it has been sent.
 final class _Subscriber {
   _Subscriber(this.socket, this.kinds);
 
+  /// About how many bytes are sent before waiting for the reader to take them.
+  static const batchBytes = 64 << 10;
+
   final Socket socket;
   final Set<Kind>? kinds;
+
+  /// The last entry passed, sent or not wanted; null before the first.
+  ObjectId? _passed;
+
+  /// Where the entry after [_passed] was, for when the order is read back
+  /// without [_passed] in it.
+  var _next = 0;
+
+  /// Whether a batch is on its way to the reader.
+  var sending = false;
+
+  var caughtUp = false;
+
+  /// Whether the reader has gone: nothing more is sent.
+  var dropped = false;
+
+  /// Marks [entry], at [next] - 1 in the order, as passed.
+  void pass(ObjectId entry, int next) {
+    _passed = entry;
+    _next = next;
+  }
+
+  /// Where in the order to go on from, by where [at] puts the last entry
+  /// passed: the order is read back whenever another process adds, so a
+  /// position alone could drift.
+  int nextIn(Map<ObjectId, int> at) => switch (_passed) {
+    null => 0,
+    final passed => switch (at[passed]) {
+      final i? => i + 1,
+      null => _next,
+    },
+  };
 
   /// `*`, or kind names joined by commas; null when any name is no kind.
   static _Subscriber? parse(Socket socket, String kinds) {

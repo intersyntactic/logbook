@@ -288,6 +288,47 @@ void main() {
       expect(await reader.next(), isNull);
       service = await start('$me turn\n');
     });
+
+    var written = 0;
+
+    /// Writes [n] `turn` entries of about 32 KiB each, each unlike any
+    /// written before, returning their ids.
+    Future<List<String>> writeTurns(int n) async => [
+      for (var i = 0; i < n; i++)
+        ok(await send(socket, 'turn\n-\n${written++} ${'x' * (32 << 10)}')),
+    ];
+
+    test('a backlog of many batches comes whole and in order', () async {
+      final turns = await writeTurns(20);
+      final reader = await Reader.open(readSocket, 'subscribe turn from start');
+      for (final turn in turns) {
+        expect(((await reader.next())! as Frame).hash, turn);
+      }
+      expect(await reader.next(), 'caught-up ${turns.last}');
+      await reader.close();
+    });
+
+    test('a reader that stops reading holds up no other, '
+        'and gets everything once it reads again', () async {
+      final started = ObjectId.of(bytesOf(object(1))).hex;
+      // Nothing reads this one until every entry is written: once the kernel's
+      // buffer is full, its batches wait in the service.
+      final stalled = await Reader.open(readSocket, 'subscribe * from start');
+      final live = await Reader.open(readSocket, 'subscribe turn from start');
+      expect(await live.next(), 'caught-up $started');
+      final turns = <String>[];
+      for (var i = 0; i < 200; i++) {
+        turns.addAll(await writeTurns(1));
+        expect(((await live.next())! as Frame).hash, turns.last);
+      }
+      expect(((await stalled.next())! as Frame).hash, started);
+      expect(await stalled.next(), 'caught-up $started');
+      for (final turn in turns) {
+        expect(((await stalled.next())! as Frame).hash, turn);
+      }
+      await stalled.close();
+      await live.close();
+    });
   });
 
   group('get', () {
