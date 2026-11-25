@@ -614,7 +614,18 @@ extension on LogbookService {
         continue;
       }
       if (bytes != null) {
-        batch += _send(socket, indexed.entry, indexed.header, bytes);
+        final trajectory = switch (subscriber.frame) {
+          _Frame.plain => null,
+          _Frame.withTrajectory =>
+            _trajectoryOf[_chainOf[indexed.entry]]?.id.hex ?? '-',
+        };
+        batch += _send(
+          socket,
+          indexed.entry,
+          indexed.header,
+          bytes,
+          trajectory: trajectory,
+        );
       }
     }
     if (at == _order.length && !subscriber.caughtUp) {
@@ -634,9 +645,10 @@ extension on LogbookService {
     }, onError: (Object _) => _drop(socket));
   }
 
-  /// `get <entry>`, `tip <entry>`, or `subscribe <kinds> from <entry>`:
-  /// `<kinds>` is `*` or names joined by commas, and what comes after `from`
-  /// is an entry, or `start` for the logbook's start.
+  /// `get <entry>`, `tip <entry>`, or `subscribe <kinds> from <entry>`,
+  /// optionally followed by `with-trajectory`: `<kinds>` is `*` or names
+  /// joined by commas, and what comes after `from` is an entry, or `start`
+  /// for the logbook's start.
   void _read(Socket socket, String request) {
     void refuse(String why) {
       socket.add(utf8.encode('refused $why\n'));
@@ -651,11 +663,14 @@ extension on LogbookService {
         if (start == null) return refuse('unknown $hex');
         socket.add(utf8.encode('tip ${_tipOf[start]!.hex}\n'));
         socket.close();
-      case ['subscribe', final kinds, 'from', final after]
-          when _Subscriber.parse(socket, kinds) != null &&
-              _SubscribeFrom.parse(after) != null:
-        final subscriber = _Subscriber.parse(socket, kinds)!;
-        if (_SubscribeFrom.parse(after)! case _FromAfter(:final entry)) {
+      case ['subscribe', final kinds, 'from', final after, ...final rest]:
+        final frame = _Frame.parse(rest);
+        final from = _SubscribeFrom.parse(after);
+        final subscriber = frame == null
+            ? null
+            : _Subscriber.parse(socket, kinds, frame);
+        if (subscriber == null || from == null) return refuse('not-a-request');
+        if (from case _FromAfter(:final entry)) {
           final at = _at[entry];
           if (at == null) return refuse('unknown $after');
           subscriber.pass(entry, at + 1);
@@ -709,12 +724,18 @@ extension on LogbookService {
 }
 
 /// Writes one entry to a reader: `entry <id> <kind> <previous> <length>`,
-/// a newline, and its bytes exactly as recorded. Returns how many bytes
-/// that is.
-int _send(Socket socket, ObjectId entry, _Header header, Uint8List bytes) {
+/// then ` <trajectory>` when [trajectory] is given, a newline, and its bytes
+/// exactly as recorded. Returns how many bytes that is.
+int _send(
+  Socket socket,
+  ObjectId entry,
+  _Header header,
+  Uint8List bytes, {
+  String? trajectory,
+}) {
   final line = utf8.encode(
     'entry ${entry.hex} ${header.kind} ${header.previous?.hex ?? '-'} '
-    '${bytes.length}\n',
+    '${bytes.length}${trajectory == null ? '' : ' $trajectory'}\n',
   );
   socket
     ..add(line)
@@ -733,13 +754,14 @@ final class _Indexed {
 /// A reader subscribed to [kinds] (null for every kind) on [socket], and how
 /// far through the logbook's order it has been sent.
 final class _Subscriber {
-  _Subscriber(this.socket, this.kinds);
+  _Subscriber(this.socket, this.kinds, this.frame);
 
   /// About how many bytes are sent before waiting for the reader to take them.
   static const batchBytes = 64 << 10;
 
   final Socket socket;
   final Set<Kind>? kinds;
+  final _Frame frame;
 
   /// The last entry passed, sent or not wanted; null before the first.
   ObjectId? _passed;
@@ -774,18 +796,35 @@ final class _Subscriber {
   };
 
   /// `*`, or kind names joined by commas; null when any name is no kind.
-  static _Subscriber? parse(Socket socket, String kinds) {
-    if (kinds == '*') return _Subscriber(socket, null);
+  static _Subscriber? parse(Socket socket, String kinds, _Frame frame) {
+    if (kinds == '*') return _Subscriber(socket, null, frame);
     final read = <Kind>{};
     for (final name in kinds.split(',')) {
       final kind = Kind.read(name);
       if (kind == null) return null;
       read.add(kind);
     }
-    return _Subscriber(socket, read);
+    return _Subscriber(socket, read, frame);
   }
 
   bool wants(Kind kind) => kinds?.contains(kind) ?? true;
+}
+
+/// What a subscriber's entry line carries after the length.
+enum _Frame {
+  /// Nothing: `entry <id> <kind> <previous> <length>`.
+  plain,
+
+  /// The trajectory that owns the entry's chain, or `-` for none.
+  withTrajectory;
+
+  /// The words after `from <entry>`: none, or `with-trajectory`; null for
+  /// anything else.
+  static _Frame? parse(List<String> words) => switch (words) {
+    [] => plain,
+    ['with-trajectory'] => withTrajectory,
+    _ => null,
+  };
 }
 
 /// Where a subscription starts: the logbook's start, or just after an entry.

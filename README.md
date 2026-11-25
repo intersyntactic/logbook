@@ -268,6 +268,15 @@ it. A reader sends one line:
   at a time, the next batch only once the reader has taken the last, so a
   reader that stops reading holds one batch in the service, and catches up
   from where it stopped once it reads again.
+- `subscribe <kinds> from <entry> with-trajectory`: the same, with one more
+  word at the end of each entry line, `entry <id> <kind> <previous>
+  <length> <trajectory>`: the trajectory that owns the entry's chain, or `-`
+  for none. A chain is a trajectory's when it starts at that trajectory's
+  `users-assigned-to-trajectory`, or at a root of an attaching kind whose
+  parent is on one. So a reader learns which trajectory an entry is on
+  without walking `previous` links, and needs only the kinds it uses. An
+  entry that names its trajectory only in its contents (an outcome, an
+  admission) has `-`.
 - `tip <entry>`: answered `tip <id>`, the tip of that entry's chain.
 - `get <entry>`: that entry, as `subscribe` sends it, with one more word
   after the length: the 96 bytes that record it, in hex, whose bytes 64–95
