@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0
+
+- **Breaking: every entry line names the trajectory the entry is on.**
+  `subscribe` sends `entry <id> <kind> <previous> <length> <trajectory>`,
+  and `get` sends the same line with the 96 bytes after it: the trajectory
+  that owns the entry's chain, or `-`. The service already knew it, to
+  decide who may write. A reader no longer has to subscribe to every kind
+  and walk `previous` links to find out, so it can ask for only the kinds
+  it uses (https://github.com/intersyntactic/logbook/issues/31, step 1).
+  `is_logbook_client` before the release that reads the sixth word refuses
+  these lines, so every reader must move to it.
+- **The code hash changes**:
+  `b6c5841d50590bd1cdbbb38a6a161a86e3d25d7f09eca13c6ded1caa3d3119ae`.
+
 ## 0.4.4
 
 - **A reader that stops reading no longer makes the service's memory grow.**

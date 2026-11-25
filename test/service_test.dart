@@ -263,6 +263,8 @@ void main() {
         'subscribe turn from -',
         'subscribe turn start',
         'subscribe turn after start',
+        'subscribe turn from start trajectory',
+        'subscribe turn from start with-trajectory',
       ]) {
         final reader = await Reader.open(readSocket, old);
         expect(await reader.next(), 'refused not-a-request', reason: old);
@@ -368,17 +370,18 @@ void main() {
         final a = ok(await send(socket, 'turn\n-\na'));
         final b = ok(await send(socket, 'turn\n$a\nb'));
         final got = await get(b);
-        expect(got.line.sublist(0, 5), [
+        expect(got.line.sublist(0, 6), [
           'entry',
           b,
           'turn',
           a,
           '${'turn\n$a\nb'.length}',
+          '-',
         ]);
         expect(utf8.decode(got.rest), 'turn\n$a\nb');
         // The bytes prove themselves; the 96 bytes name them as their object.
         expect(ObjectId.of(got.rest).hex, b);
-        expect(LogbookEntry.parse(unhex(got.line[5]))!.object.hex, b);
+        expect(LogbookEntry.parse(unhex(got.line[6]))!.object.hex, b);
       },
     );
 
@@ -902,6 +905,68 @@ void main() {
           await send(socket, 'reply-chunk\n-\n$a\nlate'),
           'refused mission-ended $mission1',
         );
+      });
+
+      test('a reader is told which trajectory owns each entry', () async {
+        final a = ok(
+          await send(socket, usersAssigned(trajectory1, mission1, me, '9001')),
+        );
+        final t = ok(await send(socket, 'turn\n$a\nt'));
+        final r = ok(await send(socket, 'reply-chunk\n-\n$a\nchunk'));
+        final unowned = ok(await send(socket, 'turn\n-\nu'));
+        Future<List<String>> lines(String request) async {
+          final s = await Socket.connect(
+            InternetAddress(readSocket.path, type: InternetAddressType.unix),
+            0,
+          );
+          s.add(bytesOf('$request\n'));
+          // Each entry line, read as a reader does: by its length, so the
+          // bytes after it are skipped whatever they hold.
+          final buffer = <int>[];
+          final found = <String>[];
+          await for (final chunk in s.timeout(const Duration(seconds: 5))) {
+            buffer.addAll(chunk);
+            while (true) {
+              final nl = buffer.indexOf(0x0a);
+              if (nl < 0) break;
+              final line = utf8.decode(buffer.sublist(0, nl));
+              if (line.startsWith('caught-up ')) {
+                s.destroy();
+                return found;
+              }
+              final end = nl + 1 + int.parse(line.split(' ')[4]);
+              if (buffer.length < end) break;
+              found.add(line);
+              buffer.removeRange(0, end);
+            }
+          }
+          return found;
+        }
+
+        const kinds = 'users-assigned-to-trajectory,turn,reply-chunk';
+        final expected = [
+          for (final (id, kind, previous, trajectory) in [
+            (a, 'users-assigned-to-trajectory', '-', trajectory1),
+            (t, 'turn', a, trajectory1),
+            // An attached root is its parent's trajectory's, though its
+            // previous is `-`.
+            (r, 'reply-chunk', '-', trajectory1),
+            (unowned, 'turn', '-', '-'),
+          ])
+            allOf(
+              startsWith('entry $id $kind $previous '),
+              endsWith(' $trajectory'),
+              predicate<String>((l) => l.split(' ').length == 6, '6 words'),
+            ),
+        ];
+        expect(await lines('subscribe $kinds from start'), expected);
+        // `get` sends the same line, with the 96 bytes after it.
+        for (final (i, id) in [a, t, r, unowned].indexed) {
+          final line = (await lines('get $id')).single;
+          final words = line.split(' ');
+          expect(words, hasLength(7), reason: line);
+          expect(words.sublist(0, 6).join(' '), expected[i]);
+        }
       });
 
       test('only for kinds the table lists as attaching', () async {

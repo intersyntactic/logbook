@@ -614,7 +614,13 @@ extension on LogbookService {
         continue;
       }
       if (bytes != null) {
-        batch += _send(socket, indexed.entry, indexed.header, bytes);
+        final line = utf8.encode(
+          '${_entryLine(indexed.entry, indexed.header, bytes)}\n',
+        );
+        socket
+          ..add(line)
+          ..add(bytes);
+        batch += line.length + bytes.length;
       }
     }
     if (at == _order.length && !subscriber.caughtUp) {
@@ -634,6 +640,14 @@ extension on LogbookService {
     }, onError: (Object _) => _drop(socket));
   }
 
+  /// `entry <id> <kind> <previous> <length> <trajectory>` for [entry], whose
+  /// header is [header] (`-` for its kind and previous when it has none):
+  /// `<trajectory>` owns the entry's chain, `-` when none does.
+  String _entryLine(ObjectId entry, _Header? header, Uint8List bytes) =>
+      'entry ${entry.hex} ${header?.kind ?? '-'} '
+      '${header?.previous?.hex ?? '-'} ${bytes.length} '
+      '${_trajectoryOf[_chainOf[entry]]?.id.hex ?? '-'}';
+
   /// `get <entry>`, `tip <entry>`, or `subscribe <kinds> from <entry>`:
   /// `<kinds>` is `*` or names joined by commas, and what comes after `from`
   /// is an entry, or `start` for the logbook's start.
@@ -651,11 +665,11 @@ extension on LogbookService {
         if (start == null) return refuse('unknown $hex');
         socket.add(utf8.encode('tip ${_tipOf[start]!.hex}\n'));
         socket.close();
-      case ['subscribe', final kinds, 'from', final after]
-          when _Subscriber.parse(socket, kinds) != null &&
-              _SubscribeFrom.parse(after) != null:
-        final subscriber = _Subscriber.parse(socket, kinds)!;
-        if (_SubscribeFrom.parse(after)! case _FromAfter(:final entry)) {
+      case ['subscribe', final kinds, 'from', final after]:
+        final from = _SubscribeFrom.parse(after);
+        final subscriber = _Subscriber.parse(socket, kinds);
+        if (subscriber == null || from == null) return refuse('not-a-request');
+        if (from case _FromAfter(:final entry)) {
           final at = _at[entry];
           if (at == null) return refuse('unknown $after');
           subscriber.pass(entry, at + 1);
@@ -670,7 +684,7 @@ extension on LogbookService {
   }
 
   /// Sends [entry] as `subscribe` does, with the 96 bytes that record it in
-  /// hex after the length. The bytes alone prove themselves: they hash to
+  /// hex after the trajectory. The bytes alone prove themselves: they hash to
   /// [entry]. The 96 bytes name [entry] as their object, for a reader that
   /// also checks the logbook's chain. An entry with
   /// no header has `-` for its kind, which no kind can be. Otherwise one
@@ -697,29 +711,10 @@ extension on LogbookService {
     final header = _Header.parse(bytes);
     final hex = raw.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     socket
-      ..add(
-        utf8.encode(
-          'entry ${entry.hex} ${header?.kind ?? '-'} '
-          '${header?.previous?.hex ?? '-'} ${bytes.length} $hex\n',
-        ),
-      )
+      ..add(utf8.encode('${_entryLine(entry, header, bytes)} $hex\n'))
       ..add(bytes)
       ..close();
   }
-}
-
-/// Writes one entry to a reader: `entry <id> <kind> <previous> <length>`,
-/// a newline, and its bytes exactly as recorded. Returns how many bytes
-/// that is.
-int _send(Socket socket, ObjectId entry, _Header header, Uint8List bytes) {
-  final line = utf8.encode(
-    'entry ${entry.hex} ${header.kind} ${header.previous?.hex ?? '-'} '
-    '${bytes.length}\n',
-  );
-  socket
-    ..add(line)
-    ..add(bytes);
-  return line.length + bytes.length;
 }
 
 /// An entry the service knows: its id and its header.
