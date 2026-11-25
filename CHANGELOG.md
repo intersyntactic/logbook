@@ -1,19 +1,18 @@
 # Changelog
 
-## 0.4.5
+## 0.5.0
 
-- **A reader can be told which trajectory each entry is on.**
-  `subscribe <kinds> from <entry> with-trajectory` adds one word to the end
-  of each entry line: the trajectory that owns the entry's chain, or `-`.
-  The service already knew it, to decide who may write. A reader no longer
-  has to subscribe to every kind and walk `previous` links to find out, so
-  it can ask for only the kinds it uses
-  (https://github.com/intersyntactic/logbook/issues/31, step 1).
-  Without `with-trajectory` every line is exactly as before: today's
-  `is_logbook_client` refuses an entry line with a sixth word, so the stamp
-  is something a reader asks for.
+- **Breaking: every entry line names the trajectory the entry is on.**
+  `subscribe` sends `entry <id> <kind> <previous> <length> <trajectory>`,
+  and `get` sends the same line with the 96 bytes after it: the trajectory
+  that owns the entry's chain, or `-`. The service already knew it, to
+  decide who may write. A reader no longer has to subscribe to every kind
+  and walk `previous` links to find out, so it can ask for only the kinds
+  it uses (https://github.com/intersyntactic/logbook/issues/31, step 1).
+  `is_logbook_client` before the release that reads the sixth word refuses
+  these lines, so every reader must move to it.
 - **The code hash changes**:
-  `f987d365b6b60af95c334297743c41e02b8e59c536015bf7b36cd98c2cb41db4`.
+  `b6c5841d50590bd1cdbbb38a6a161a86e3d25d7f09eca13c6ded1caa3d3119ae`.
 
 ## 0.4.4
 

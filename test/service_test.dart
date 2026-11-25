@@ -264,8 +264,7 @@ void main() {
         'subscribe turn start',
         'subscribe turn after start',
         'subscribe turn from start trajectory',
-        'subscribe turn from start with-trajectory with-trajectory',
-        'subscribe turn from start with-trajectory ',
+        'subscribe turn from start with-trajectory',
       ]) {
         final reader = await Reader.open(readSocket, old);
         expect(await reader.next(), 'refused not-a-request', reason: old);
@@ -371,17 +370,18 @@ void main() {
         final a = ok(await send(socket, 'turn\n-\na'));
         final b = ok(await send(socket, 'turn\n$a\nb'));
         final got = await get(b);
-        expect(got.line.sublist(0, 5), [
+        expect(got.line.sublist(0, 6), [
           'entry',
           b,
           'turn',
           a,
           '${'turn\n$a\nb'.length}',
+          '-',
         ]);
         expect(utf8.decode(got.rest), 'turn\n$a\nb');
         // The bytes prove themselves; the 96 bytes name them as their object.
         expect(ObjectId.of(got.rest).hex, b);
-        expect(LogbookEntry.parse(unhex(got.line[5]))!.object.hex, b);
+        expect(LogbookEntry.parse(unhex(got.line[6]))!.object.hex, b);
       },
     );
 
@@ -907,8 +907,7 @@ void main() {
         );
       });
 
-      test('a reader asking with-trajectory is told whose chain each entry '
-          'is on', () async {
+      test('a reader is told which trajectory owns each entry', () async {
         final a = ok(
           await send(socket, usersAssigned(trajectory1, mission1, me, '9001')),
         );
@@ -945,7 +944,7 @@ void main() {
         }
 
         const kinds = 'users-assigned-to-trajectory,turn,reply-chunk';
-        expect(await lines('subscribe $kinds from start with-trajectory'), [
+        final expected = [
           for (final (id, kind, previous, trajectory) in [
             (a, 'users-assigned-to-trajectory', '-', trajectory1),
             (t, 'turn', a, trajectory1),
@@ -959,10 +958,14 @@ void main() {
               endsWith(' $trajectory'),
               predicate<String>((l) => l.split(' ').length == 6, '6 words'),
             ),
-        ]);
-        // Without it, the line ends at the length, as it always has.
-        for (final line in await lines('subscribe $kinds from start')) {
-          expect(line.split(' '), hasLength(5), reason: line);
+        ];
+        expect(await lines('subscribe $kinds from start'), expected);
+        // `get` sends the same line, with the 96 bytes after it.
+        for (final (i, id) in [a, t, r, unowned].indexed) {
+          final line = (await lines('get $id')).single;
+          final words = line.split(' ');
+          expect(words, hasLength(7), reason: line);
+          expect(words.sublist(0, 6).join(' '), expected[i]);
         }
       });
 
