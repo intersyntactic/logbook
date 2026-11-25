@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.4
+
+- **A reader that stops reading no longer makes the service's memory grow.**
+  Each subscriber is now a place in the logbook's order. The service sends
+  the entries it wants about 64 KiB at a time, and the next batch only once
+  the reader has taken the last (`flush()` has completed), so a stalled
+  reader holds one batch, not every entry it is owed. Before, each entry
+  was queued on every subscriber's socket as it was written, without limit
+  (https://github.com/intersyntactic/logbook/issues/37).
+- **A backlog no longer goes out in one burst.** `subscribe … from start`
+  used to queue the whole backlog at once. The backlog and the live entries
+  are now one walk through the order, paced the same way. What a reader
+  receives is unchanged: the same entries, in the same order, with
+  `caught-up <head>` between the backlog and the first new entry.
+- **The code hash changes**:
+  `91daed8d68635772940756a9434c66f3b2b3a44221323ef76590bc2de522bd22`.
+
 ## 0.4.3
 
 - **Everything the service does is now in `lib/`, so the code hash covers

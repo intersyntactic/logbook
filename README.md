@@ -264,7 +264,10 @@ it. A reader sends one line:
   sha256 is `<id>`, so a reader checks every one. Between the
   backlog and the first new entry comes one line, `caught-up <head>`: the
   logbook's last entry of any kind when the backlog ended, or `start`, which
-  is also a place to subscribe from next time.
+  is also a place to subscribe from next time. Entries go out about 64 KiB
+  at a time, the next batch only once the reader has taken the last, so a
+  reader that stops reading holds one batch in the service, and catches up
+  from where it stopped once it reads again.
 - `tip <entry>`: answered `tip <id>`, the tip of that entry's chain.
 - `get <entry>`: that entry, as `subscribe` sends it, with one more word
   after the length: the 96 bytes that record it, in hex, whose bytes 64–95
