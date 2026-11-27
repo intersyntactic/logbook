@@ -157,7 +157,8 @@ every reader and every copy of the logbook computes the same one. Since the
 bytes are the identity, two entries with the same kind, previous and body are
 one entry: a writer that means two makes the bytes differ. A resend of bytes
 that got in is answered `refused duplicate <id>`, which says they are in, so
-resending after a lost answer is safe. The 96 bytes that chain the logbook
+resending after a lost answer is safe. If the entry went in but its bytes
+were lost, the resend keeps them and is answered `ok <id>`. The 96 bytes that chain the logbook
 (above) are its own check, and never an id on the socket.
 
 `ok` means the entry and its bytes outlast the service crashing or being
@@ -169,6 +170,26 @@ missing. This is chosen, not overlooked: a sender that acts after `ok` is
 covered against crashes, and a power cut on the logbook's machine is rare
 enough to accept a reported hole. What closing it would take, measured, is in
 [issue 13](https://github.com/intersyntactic/logbook/issues/13).
+
+The service treats such a hole as an entry that went in but whose chain it
+can't know. A crash between writing an entry and keeping its bytes leaves
+one too, and so does an object that no longer hashes to its name.
+
+- A chain that starts at the hole, and every chain whose tip comes before
+  the hole, might be the one it extended. Each of those is refused
+  `refused hole <id>`, naming the hole. Chains with an entry after the hole
+  are not affected.
+- Sending the hole's bytes again keeps them and answers `ok <id>`, with no
+  new entry, and the chains open again.
+- If the hole was the service's own `started` entry, the service keeps its
+  bytes itself at the next start, as long as the sender table hasn't
+  changed.
+- A `mission-ended` or `trajectory-closed` after a hole still closes what it
+  names.
+
+One old corrupt object freezes every chain older than it until someone
+sends its bytes again or restores it. That is the price of never letting a
+chain fork.
 
     LOGBOOK_DIR=/var/lib/intersyntactic-logbook \
       LOGBOOK_SOCKET=/run/intersyntactic-logbook/logbook.sock \

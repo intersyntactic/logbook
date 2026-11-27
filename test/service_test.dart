@@ -1048,6 +1048,88 @@ void main() {
       // trajectory1's users are free.
       ok(await send(socket, usersAssigned(trajectory3, mission1, me, '9001')));
     });
+
+    group('a hole', () {
+      final senders =
+          '$me users-assigned-to-trajectory mission-ended trajectory-closed reply-chunk turn proposed\n$table';
+
+      /// The file holding the bytes of entry [id].
+      File objectOf(String id) =>
+          File('${dir.path}/objects/${id.substring(0, 2)}/${id.substring(2)}');
+
+      Future<void> restart() async {
+        await service.close();
+        service = await start(senders);
+      }
+
+      test('does not reopen what the entries after it closed', () async {
+        final mine = ok(
+          await send(socket, usersAssigned(trajectory1, mission1, me, '9001')),
+        );
+        decided = ok(await send(socket, 'turn\n-\nd1'));
+        final lost = ok(await send(socket, 'turn\n$decided\nd2'));
+        decided = lost;
+        ok(await end(mission1));
+        ok(await close(trajectory3));
+        objectOf(lost).deleteSync();
+        await restart();
+        expect(
+          await send(socket, 'turn\n$mine\nx'),
+          'refused mission-ended $mission1',
+        );
+        expect(
+          await send(
+            socket,
+            usersAssigned(trajectory3, mission2, '9002', '9003'),
+          ),
+          'refused trajectory-closed $trajectory3',
+        );
+      });
+
+      test(
+        'freezes the chain it starts and every chain whose tip is before it, '
+        'until its bytes are sent again',
+        () async {
+          final a = ok(await send(socket, 'turn\n-\na'));
+          const lostBytes = 'turn\n-\nx';
+          final x = ok(await send(socket, lostBytes));
+          final y = ok(await send(socket, 'turn\n$x\ny'));
+          final c = ok(await send(socket, 'turn\n-\nc'));
+          objectOf(x).writeAsStringSync('changed');
+          await restart();
+          expect(await send(socket, 'turn\n$a\nb'), 'refused hole $x');
+          expect(await send(socket, 'turn\n$y\nz'), 'refused hole $x');
+          // c came after the hole and named no entry, so x cannot be on it.
+          final d = ok(await send(socket, 'turn\n$c\nd'));
+          expect(await send(socket, lostBytes), 'ok $x');
+          expect(
+            utf8.decode(service.logbook.get(ObjectId.parse(x)!)!),
+            lostBytes,
+          );
+          ok(await send(socket, 'turn\n$a\nb'));
+          ok(await send(socket, 'turn\n$y\nz'));
+          ok(await send(socket, 'turn\n$d\ne'));
+          // Kept, no entry added: a second send is a duplicate again.
+          expect(await send(socket, lostBytes), 'refused duplicate $x');
+        },
+      );
+
+      test(
+        'of the service\'s own started is kept again at the next start',
+        () async {
+          final a = ok(await send(socket, 'turn\n-\na'));
+          await restart();
+          final raw = File('${dir.path}/entries').readAsBytesSync();
+          final started = LogbookEntry.parse(
+            Uint8List.sublistView(raw, raw.length - 96),
+          )!.object.hex;
+          objectOf(started).deleteSync();
+          await restart();
+          expect(objectOf(started).existsSync(), isTrue);
+          ok(await send(socket, 'turn\n$a\nb'));
+        },
+      );
+    });
   });
 
   group('the socket user', () {

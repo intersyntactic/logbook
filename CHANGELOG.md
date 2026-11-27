@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.1
+
+- **One lost object no longer reopens closed missions and trajectories after
+  a restart** (https://github.com/intersyntactic/logbook/issues/27, finding
+  1). An entry whose bytes are missing or corrupt is now a hole. Entries
+  that name it join a chain that starts at the hole, so a `mission-ended`
+  or `trajectory-closed` after a hole still closes what it names. Before,
+  every entry after the hole on its chain was dropped on restart.
+- **A hole freezes every chain it might have extended**: the chain it
+  starts, and every chain whose tip comes before it. Each one is refused
+  `refused hole <id>`, so no chain can fork from a tip that a lost entry
+  had already moved on from.
+- **Sending a hole's bytes again heals it** (finding 2). The resend keeps
+  the bytes, adds no entry, and is answered `ok <id>`, where it used to get
+  `refused duplicate`. The service heals its own lost `started` entry at
+  the next start if the sender table hasn't changed. `Logbook.keep` keeps
+  bytes for an entry that already names them.
+- **The code hash changes**:
+  `a85ab1ae0c78a2fe868c9420a5bfa0c565a81a19b44a902bbe537222e89f3b28`.
+
 ## 0.5.0
 
 - **Breaking: every entry line names the trajectory the entry is on.**
