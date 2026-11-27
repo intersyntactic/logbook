@@ -336,6 +336,26 @@ final class Logbook {
   /// later entry's bytes can name.
   EntryHash addEntry(Uint8List bytes) => _add(bytes).entry;
 
+  /// Keeps [bytes] again, adding no entry, for an entry that names them but
+  /// whose object is missing or no longer holds them. Safe to repeat, since
+  /// an object is named by its bytes. False, keeping nothing, when no entry
+  /// names them, so no bytes are kept that no entry names.
+  bool keep(Uint8List bytes) {
+    if (!_open) throw StateError('this logbook is closed');
+    final id = ObjectId.of(bytes);
+    final file = File('${dir.path}/entries');
+    if (!file.existsSync()) return false;
+    final raw = file.readAsBytesSync();
+    for (var at = 0; at + LogbookEntry.length <= raw.length;) {
+      final entry = Uint8List.sublistView(raw, at, at += LogbookEntry.length);
+      if (LogbookEntry.parse(entry)?.object == id) {
+        _keep(id, bytes);
+        return true;
+      }
+    }
+    return false;
+  }
+
   ({ObjectId object, EntryHash entry}) _add(Uint8List bytes) {
     if (!_open) throw StateError('this logbook is closed');
     final id = ObjectId.of(bytes);

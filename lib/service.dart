@@ -38,6 +38,13 @@
 /// first body line, and belongs to that entry's trajectory. Every other chain takes an entry from any user the
 /// table lets send its kind. Who owns what is read back from the logbook on
 /// every start, so a restart refuses exactly what the live service did.
+///
+/// An entry whose bytes are missing or corrupt is a hole: the logbook
+/// recorded it, but not what it said, so not which chain it extended. A
+/// chain the hole starts, or whose tip comes before it, is refused
+/// `refused hole <id>` until the hole's bytes are sent again, which keeps
+/// them and answers `ok <id>`. A `mission-ended` or `trajectory-closed`
+/// closes whatever it names even when a hole cuts its chain.
 library;
 
 import 'dart:convert';
@@ -192,6 +199,15 @@ final class LogbookService {
   final _order = <_Indexed>[];
   final _at = <ObjectId, int>{};
 
+  /// Where each entry is in the logbook, from 0, headers or not.
+  final _position = <ObjectId, int>{};
+
+  /// How many entries the logbook holds.
+  var _recorded = 0;
+
+  /// Entries whose bytes are missing or corrupt, in the logbook's order.
+  final _holes = <ObjectId>{};
+
   /// Every entry in the logbook, by id, as the 96 bytes that record it,
   /// whether or not its bytes can be read: an entry whose bytes are lost was
   /// still recorded.
@@ -256,6 +272,7 @@ final class LogbookService {
       service._readServer!.listen(service._serveReader);
     }
     service._load();
+    service._healStarted();
     service._append(Kind.started, service._lastStarted, senders.bytes);
     service._server.listen(service._serve);
     return service;
@@ -294,9 +311,14 @@ final class LogbookService {
   }
 
   /// Reads the entries back, and the chains from their headers. An entry
-  /// whose object is missing or has no header is in no chain, and no entry
-  /// can name it as previous, but `get` still finds it.
+  /// with no header is in no chain, and no entry can name it as previous,
+  /// but `get` still finds it. A hole starts a chain of its own, which the
+  /// entries naming it join. An entry that cannot join its chain still
+  /// closes what it closes.
   void _load() {
+    _recorded = 0;
+    _position.clear();
+    _holes.clear();
     _chainOf.clear();
     _tipOf.clear();
     _order.clear();
@@ -318,20 +340,58 @@ final class LogbookService {
       final entry = LogbookEntry.parse(bytes)!.object;
       _head = EntryHash.of(bytes);
       _entries[entry] = bytes;
+      _position[entry] = _recorded++;
       final Uint8List? object;
       try {
         object = logbook.get(entry);
       } on CorruptObject {
+        _hole(entry);
         continue;
       }
-      final header = object == null ? null : _Header.parse(object);
+      if (object == null) {
+        _hole(entry);
+        continue;
+      }
+      final header = _Header.parse(object);
       if (header == null) continue;
       _index(entry, header);
       final previous = header.previous;
-      if (previous != null && !_isTip(previous)) continue;
-      _link(entry, previous);
-      _own(entry, header, object!);
+      if (previous == null || _isTip(previous)) {
+        _link(entry, previous);
+        _own(entry, header, object);
+      } else {
+        _close(header.kind, _bodyOf(object));
+      }
     }
+  }
+
+  /// Records [entry], whose bytes are lost, as a hole starting its own chain.
+  void _hole(ObjectId entry) {
+    _holes.add(entry);
+    _chainOf[entry] = entry;
+    _tipOf[entry] = entry;
+  }
+
+  /// The hole that may have extended the chain [start] begins: [start]
+  /// itself when it is one, or else the first hole after the chain's tip.
+  /// Null when no hole can be on the chain: one of its entries came after
+  /// every hole and named the entry before it.
+  ObjectId? _holeOn(ObjectId start) {
+    if (_holes.contains(start)) return start;
+    final tip = _position[_tipOf[start]!]!;
+    for (final hole in _holes) {
+      if (_position[hole]! > tip) return hole;
+    }
+    return null;
+  }
+
+  /// Keeps the bytes of a `started` entry a crash lost between recording it
+  /// and keeping them. Nobody else holds them to send again, but they are
+  /// this start's table after the `started` before, when the table has not
+  /// changed.
+  void _healStarted() {
+    final bytes = _entryBytes(Kind.started, _lastStarted, _senders.bytes);
+    if (_holes.contains(ObjectId.of(bytes)) && logbook.keep(bytes)) _load();
   }
 
   void _index(ObjectId entry, _Header header) {
@@ -345,6 +405,7 @@ final class LogbookService {
     final entry = ObjectId.of(bytes);
     final raw = LogbookEntry(_head, logbook.codeHash, entry).encode();
     if (EntryHash.of(raw) == link) {
+      _position[entry] = _recorded++;
       _entries[entry] = raw;
       _head = link;
       _index(entry, header);
@@ -369,17 +430,10 @@ final class LogbookService {
   void _own(ObjectId entry, _Header header, Uint8List bytes) {
     final body = _bodyOf(bytes);
     final kind = header.kind;
+    if (_close(kind, body)) return;
     if (kind == Kind.started) {
       _attaching = SenderTable.attachingIn(body);
       _lastStarted = entry;
-    } else if (kind == Kind.missionEnded) {
-      if (_MissionId.missionEndedIn(body) case final mission?) {
-        _endedMissions.add(mission);
-      }
-    } else if (kind == Kind.trajectoryClosed) {
-      if (_TrajectoryId.trajectoryClosedIn(body) case final trajectory?) {
-        _closedTrajectories.add(trajectory);
-      }
     } else if (header.previous != null) {
       return;
     } else if (kind == Kind.usersAssignedToTrajectory) {
@@ -400,6 +454,24 @@ final class LogbookService {
         }
       }
     }
+  }
+
+  /// Closes what a `mission-ended` or `trajectory-closed` with [body] names.
+  /// Whether [kind] is one of them.
+  bool _close(Kind kind, Uint8List body) {
+    if (kind == Kind.missionEnded) {
+      if (_MissionId.missionEndedIn(body) case final mission?) {
+        _endedMissions.add(mission);
+      }
+      return true;
+    }
+    if (kind == Kind.trajectoryClosed) {
+      if (_TrajectoryId.trajectoryClosedIn(body) case final trajectory?) {
+        _closedTrajectories.add(trajectory);
+      }
+      return true;
+    }
+    return false;
   }
 
   /// Why [header], sent by [user], breaks a trajectory's ownership; null when it
@@ -492,12 +564,15 @@ final class LogbookService {
   }
 
   void _append(Kind kind, ObjectId? previous, Uint8List rest) {
-    final bytes = Uint8List.fromList([
-      ...utf8.encode('$kind\n${previous?.hex ?? '-'}\n'),
-      ...rest,
-    ]);
+    final bytes = _entryBytes(kind, previous, rest);
     _added(logbook.addEntry(bytes), _Header(kind, previous), bytes);
   }
+
+  static Uint8List _entryBytes(Kind kind, ObjectId? previous, Uint8List rest) =>
+      Uint8List.fromList([
+        ...utf8.encode('$kind\n${previous?.hex ?? '-'}\n'),
+        ...rest,
+      ]);
 
   Future<void> _serve(Socket socket) async {
     final reading = _socketUserReader.read(socket);
@@ -540,6 +615,7 @@ final class LogbookService {
       return 'refused kind $name for user $user';
     }
     final entry = ObjectId.of(request);
+    if (_holes.contains(entry)) return _heal(request, entry);
     if (_entries.containsKey(entry)) return 'refused duplicate ${entry.hex}';
     final previous = header.previous;
     if (previous != null) {
@@ -552,6 +628,12 @@ final class LogbookService {
     if (_ownership(user, header, request) case final why?) {
       return 'refused $why';
     }
+    // After ownership, so a chain that is closed for good says so.
+    if (previous != null) {
+      if (_holeOn(_chainOf[previous]!) case final hole?) {
+        return 'refused hole ${hole.hex}';
+      }
+    }
     try {
       _added(logbook.addEntry(request), header, request);
       return 'ok ${entry.hex}';
@@ -561,6 +643,23 @@ final class LogbookService {
       _load();
       return 'failed ${e.message}';
     }
+  }
+
+  /// Keeps [request], the lost bytes of the hole [entry], and reads the
+  /// logbook back with them. The entry went through every check when it was
+  /// recorded, so none runs again, and no entry is added.
+  String _heal(Uint8List request, ObjectId entry) {
+    try {
+      if (!logbook.keep(request)) return 'refused unknown ${entry.hex}';
+    } on FileSystemException catch (e) {
+      return 'failed ${e.message}';
+    } finally {
+      _load();
+      for (final subscriber in _subscribers.toList()) {
+        _pump(subscriber);
+      }
+    }
+    return 'ok ${entry.hex}';
   }
 }
 
