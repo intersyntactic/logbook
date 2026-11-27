@@ -237,6 +237,13 @@ nothing:
   `users-assigned-to-trajectory` is then refused. Closing a trajectory twice
   changes nothing.
 
+Another release can give ownership to different kinds, and to this one
+those are plain kinds: a table naming one starts fine and owns nothing. A
+deploy can ask the source it's about to build which kinds it gives ownership
+to, one per line, and refuse a table that names any other release's:
+
+    dart run is_logbook:ownership_kinds
+
 A kind the table lists on an `attaching:` line starts a chain of its own
 that belongs to a trajectory, such as a reply sent in chunks beside the
 turns. Its first body line names its parent: an entry's id and a newline. It

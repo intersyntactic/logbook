@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2
+
+- **`dart run is_logbook:ownership_kinds` prints the kinds that decide chain
+  ownership in this release**, one per line. A deploy can read them from
+  the source it's about to build instead of keeping its own copy. The
+  service now decides ownership only through `OwnershipKind`, and a test
+  checks that `lib/` names those kinds nowhere else, so the list it prints
+  is the list the service acts on.
+- **The code hash changes**:
+  `227aebe08f5b51055ae491af640cebdba6ff26ce417774483b552344f176da14`.
+
 ## 0.5.1
 
 - **One lost object no longer reopens closed missions and trajectories after
