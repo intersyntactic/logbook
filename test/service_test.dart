@@ -614,6 +614,156 @@ void main() {
       );
     });
 
+    group('users-assigned-uids', () {
+      /// A service whose uidOf finds [uids].
+      Future<LogbookService> startFinding(Map<String, int> uids) async {
+        await service.close();
+        return LogbookService.start(
+          Logbook.open(dir)!,
+          SenderTable.parse(
+            bytesOf('$me users-assigned-to-trajectory turn mission-ended\n'),
+          ),
+          socket,
+          readSocket: readSocket,
+          uidOf: (user) => switch (uids[user]) {
+            final n? => UserId.parse(n),
+            null => null,
+          },
+        );
+      }
+
+      /// Every entry in the logbook, as text.
+      List<String> objects() {
+        final n = File('${dir.path}/entries').lengthSync() ~/ 96;
+        return [for (var i = 1; i <= n; i++) object(i)];
+      }
+
+      List<String> uidsEntries() => objects()
+          .where((o) => o.startsWith('users-assigned-uids\n'))
+          .toList();
+
+      String uidsBody(String assignment, int loop, int suit) =>
+          'users-assigned-uids\n-\n'
+          '{"assignment":"$assignment","loopUser":$loop,"suit":$suit}';
+
+      test('follows each accepted assignment, as its own root', () async {
+        service = await startFinding({'loop-1': myUid, 'suit-1': 5001});
+        final a = ok(
+          await send(
+            socket,
+            usersAssigned(trajectory1, mission1, 'loop-1', 'suit-1'),
+          ),
+        );
+        final all = objects();
+        expect(all.last, uidsBody(a, myUid, 5001));
+        expect(all[all.length - 2], startsWith('users-assigned-to-trajectory'));
+        // Its chain is untouched: the assignment is still the tip.
+        expect(await send(socket, 'turn\n$a\nx'), startsWith('ok '));
+      });
+
+      test(
+        'a restart keeps the uids an assignment was accepted with',
+        () async {
+          service = await startFinding({'loop-1': myUid, 'suit-1': 5001});
+          final a = ok(
+            await send(
+              socket,
+              usersAssigned(trajectory1, mission1, 'loop-1', 'suit-1'),
+            ),
+          );
+          // loop-1 is renumbered, and suit-1 removed.
+          service = await startFinding({'loop-1': 6001});
+          expect(await send(socket, 'turn\n$a\nx'), startsWith('ok '));
+          expect(uidsEntries(), hasLength(1));
+        },
+      );
+
+      test(
+        'an open trajectory assigned without one gets one at the next start',
+        () async {
+          await service.close();
+          final logbook = Logbook.open(dir)!;
+          final open = bytesOf(
+            usersAssigned(trajectory1, mission1, 'loop-1', 'suit-1'),
+          );
+          final closed = bytesOf(
+            usersAssigned(trajectory2, mission2, 'loop-2', 'suit-2'),
+          );
+          logbook
+            ..addEntry(open)
+            ..addEntry(closed)
+            ..addEntry(
+              bytesOf(
+                'mission-ended\n-\n{"event":"${'e0' * 32}","by":"person",'
+                '"mission":"$mission2"}',
+              ),
+            )
+            ..close();
+          service = await startFinding({
+            'loop-1': myUid,
+            'suit-1': 5001,
+            'loop-2': 5002,
+            'suit-2': 5003,
+          });
+          expect(uidsEntries(), [uidsBody(ObjectId.of(open).hex, myUid, 5001)]);
+          service = await startFinding({'loop-1': 6001});
+          expect(
+            await send(socket, 'turn\n${ObjectId.of(open).hex}\nx'),
+            startsWith('ok '),
+          );
+          expect(uidsEntries(), hasLength(1));
+        },
+      );
+
+      test(
+        'one whose bytes are lost is kept again at the next start',
+        () async {
+          service = await startFinding({'loop-1': myUid, 'suit-1': 5001});
+          final a = ok(
+            await send(
+              socket,
+              usersAssigned(trajectory1, mission1, 'loop-1', 'suit-1'),
+            ),
+          );
+          final uids = ObjectId.of(bytesOf(uidsBody(a, myUid, 5001))).hex;
+          File(
+            '${dir.path}/objects/${uids.substring(0, 2)}/${uids.substring(2)}',
+          ).deleteSync();
+          final entries = File('${dir.path}/entries').lengthSync();
+          service = await startFinding({'loop-1': myUid, 'suit-1': 5001});
+          expect(uidsEntries(), [uidsBody(a, myUid, 5001)]);
+          // Only the new start was added: the lost entry was kept, not added twice.
+          expect(File('${dir.path}/entries').lengthSync(), entries + 96);
+          expect(await send(socket, 'turn\n$a\nx'), startsWith('ok '));
+        },
+      );
+
+      test('the first for an assignment holds', () async {
+        service = await startFinding({'loop-1': myUid, 'suit-1': 5001});
+        final a = ok(
+          await send(
+            socket,
+            usersAssigned(trajectory1, mission1, 'loop-1', 'suit-1'),
+          ),
+        );
+        await service.close();
+        // Something with the logbook's own access adds a second one.
+        Logbook.open(dir)!
+          ..addEntry(bytesOf(uidsBody(a, 6001, 5001)))
+          ..close();
+        service = await startFinding({'loop-1': myUid, 'suit-1': 5001});
+        expect(await send(socket, 'turn\n$a\nx'), startsWith('ok '));
+      });
+
+      test('no sender may send one', () async {
+        service = await startFinding({'loop-1': myUid, 'suit-1': 5001});
+        expect(
+          await send(socket, uidsBody('c1' * 32, myUid, 5001)),
+          'refused kind users-assigned-uids for user $myUid',
+        );
+      });
+    });
+
     test('a user it cannot find is refused, not skipped', () async {
       expect(
         await send(
@@ -1219,6 +1369,8 @@ void main() {
     test('refuses a kind it cannot hold, and a user it cannot find', () {
       for (final bad in [
         '$me started\n',
+        '$me users-assigned-uids\n',
+        'attaching: users-assigned-uids\n',
         '$me tu/rn\n',
         '$me -\n',
         '$me\n',

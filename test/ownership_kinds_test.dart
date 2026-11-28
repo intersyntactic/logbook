@@ -16,6 +16,7 @@ void main() {
       final stdout = run.stdout as String;
       expect(stdout.trim().split('\n'), [
         'users-assigned-to-trajectory',
+        'users-assigned-uids',
         'mission-ended',
         'trajectory-closed',
       ]);
@@ -32,18 +33,26 @@ void main() {
 
   // A kind the service reads past OwnershipKind would own chains without
   // bin/ownership_kinds printing it, and a deploy would not see it.
-  test('lib/ names an ownership kind only inside OwnershipKind.kind', () {
+  test('lib/ names an ownership kind only inside OwnershipKind', () {
     final named = RegExp(
-      r'(?<!\[)\bKind\.(usersAssignedToTrajectory|missionEnded|trajectoryClosed)\b',
+      r'(?<!\[)\bKind\.(usersAssignedToTrajectory|missionEnded|trajectoryClosed)\b'
+      r"|'(users-assigned-to-trajectory|users-assigned-uids|mission-ended|trajectory-closed)'",
     );
-    final uses = <String>[];
+    final outside = <String>[];
+    var inside = 0;
     for (final file in Directory('lib').listSync(recursive: true)) {
       if (file is! File || !file.path.endsWith('.dart')) continue;
+      var inEnum = false;
       final lines = file.readAsLinesSync();
       for (var n = 0; n < lines.length; n++) {
-        if (named.hasMatch(lines[n])) uses.add('${file.path}:${n + 1}');
+        if (lines[n].startsWith('enum OwnershipKind ')) inEnum = true;
+        if (named.hasMatch(lines[n])) {
+          inEnum ? inside++ : outside.add('${file.path}:${n + 1}');
+        }
+        if (inEnum && lines[n] == '}') inEnum = false;
       }
     }
-    expect(uses, hasLength(OwnershipKind.values.length), reason: '$uses');
+    expect(outside, isEmpty);
+    expect(inside, OwnershipKind.values.length);
   });
 }
