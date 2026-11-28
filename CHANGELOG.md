@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0
+
+- **Breaking: the service writes its own `users-assigned-uids` entry
+  straight after each `users-assigned-to-trajectory` it accepts**,
+  recording the two users' uids
+  (https://github.com/intersyntactic/logbook/issues/27, finding 10). A
+  restart takes the trajectory's users from it instead of looking the names
+  up again, so renumbering or removing a unix user no longer changes who
+  owns a trajectory. The entry is a root of its own, so the assignment
+  stays its chain's tip, and senders change nothing. At each start, every
+  open trajectory without one gets one: those assigned before 0.6.0, and
+  any whose entry a crash lost (lost bytes are kept again, not added twice).
+- **It's a fourth ownership kind.** `ownership_kinds` prints it, and a
+  sender table that names it, or lists it as attaching, is refused, as
+  `started` is. A reader subscribed to `*` sees these entries.
+- **The code hash changes**:
+  `f3adb1e730454b990ecedee2fa0903710daaed176d6992fd0bf88c99f424fd57`.
+
 ## 0.5.2
 
 - **`dart run is_logbook:ownership_kinds` prints the kinds that decide chain

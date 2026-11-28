@@ -31,7 +31,10 @@
 /// [Kind.usersAssignedToTrajectory] starts it and names the one user who
 /// may extend it, its loop user, and the user that wears its suit. No
 /// trajectory is assigned twice, and no user is in use by two open
-/// trajectories. An entry of kind [Kind.missionEnded] closes every chain of
+/// trajectories. Straight after one it accepts, the service writes a
+/// `users-assigned-uids` root of its own recording the two users' uids, so a
+/// restart never looks them up again; an open trajectory without one gets one
+/// at the next start. An entry of kind [Kind.missionEnded] closes every chain of
 /// its mission, and one of kind [Kind.trajectoryClosed] every chain of one
 /// trajectory, even one whose users are not assigned yet. A kind the table
 /// lists as attaching starts a chain that names its parent entry on its
@@ -67,11 +70,19 @@ export 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart'
 /// these so a deploy can refuse that table.
 enum OwnershipKind {
   usersAssignedToTrajectory,
+
+  /// The uids the service found for a `users-assigned-to-trajectory` it
+  /// accepted, which it writes itself straight after it, so a restart
+  /// never looks the users up again. No sender table may name it.
+  usersAssignedUids,
   missionEnded,
   trajectoryClosed;
 
+  static final _usersAssignedUids = Kind.parse('users-assigned-uids')!;
+
   Kind get kind => switch (this) {
     usersAssignedToTrajectory => Kind.usersAssignedToTrajectory,
+    usersAssignedUids => _usersAssignedUids,
     missionEnded => Kind.missionEnded,
     trajectoryClosed => Kind.trajectoryClosed,
   };
@@ -139,6 +150,9 @@ final class SenderTable {
         final kind = Kind.parse(word);
         if (kind == null) {
           throw FormatException('line ${n + 1}: $word is not a kind');
+        }
+        if (OwnershipKind.of(kind) == OwnershipKind.usersAssignedUids) {
+          throw FormatException('line ${n + 1}: only the service writes $word');
         }
         (kinds[user] ??= {}).add(kind);
       }
@@ -288,6 +302,7 @@ final class LogbookService {
     service._load();
     service._healStarted();
     service._append(Kind.started, service._lastStarted, senders.bytes);
+    service._recordMissingUids();
     service._server.listen(service._serve);
     return service;
   }
@@ -377,6 +392,66 @@ final class LogbookService {
         _close(header.kind, _bodyOf(object));
       }
     }
+    for (final trajectory in _trajectories.values) {
+      if (trajectory.uidsRecorded) continue;
+      trajectory
+        ..loopUser = _uid(trajectory.names.loopUser)
+        ..suit = _uid(trajectory.names.suit);
+    }
+  }
+
+  /// Whether [trajectory] is still open: its mission not ended, itself not
+  /// closed.
+  bool _open(_Trajectory trajectory) =>
+      !_endedMissions.contains(trajectory.mission) &&
+      !_closedTrajectories.contains(trajectory.id);
+
+  /// The `users-assigned-uids` entry that records [trajectory]'s users as
+  /// they are now; null when either cannot be found.
+  Uint8List? _uidsEntry(_Trajectory trajectory) =>
+      switch ((trajectory.loopUser, trajectory.suit)) {
+        (final loopUser?, final suit?) => _entryBytes(
+          OwnershipKind.usersAssignedUids.kind,
+          null,
+          _UsersAssignedUids(trajectory.assignment, loopUser, suit).encode(),
+        ),
+        _ => null,
+      };
+
+  /// Records the uids of the trajectory the `users-assigned-to-trajectory`
+  /// [assignment], just added, roots: those the checks just found for it. A
+  /// failed add leaves them unrecorded until the next start, and the
+  /// assignment stands.
+  void _recordUids(ObjectId assignment) {
+    final trajectory = _trajectoryOf[assignment]!;
+    trajectory
+      ..loopUser = _uid(trajectory.names.loopUser)
+      ..suit = _uid(trajectory.names.suit);
+    final bytes = _uidsEntry(trajectory);
+    if (bytes == null) return;
+    try {
+      _append(OwnershipKind.usersAssignedUids.kind, null, _bodyOf(bytes));
+    } on FileSystemException {
+      _load();
+    }
+  }
+
+  /// Records the uids of every open trajectory that has none recorded, as
+  /// they are found now: one assigned before the service recorded uids, or
+  /// whose `users-assigned-uids` a crash lost. Keeps lost bytes it can
+  /// write again rather than adding them twice.
+  void _recordMissingUids() {
+    for (final trajectory in _trajectories.values.toList()) {
+      if (trajectory.uidsRecorded || !_open(trajectory)) continue;
+      final bytes = _uidsEntry(trajectory);
+      if (bytes == null) continue;
+      final id = ObjectId.of(bytes);
+      if (_holes.contains(id)) {
+        if (logbook.keep(bytes)) _load();
+      } else if (!_entries.containsKey(id)) {
+        _append(OwnershipKind.usersAssignedUids.kind, null, _bodyOf(bytes));
+      }
+    }
   }
 
   /// Records [entry], whose bytes are lost, as a hole starting its own chain.
@@ -453,14 +528,24 @@ final class LogbookService {
     } else if (OwnershipKind.of(kind) ==
         OwnershipKind.usersAssignedToTrajectory) {
       if (_UsersAssigned.parse(body) case final a?) {
-        final trajectory = _Trajectory(
-          a.trajectory,
-          a.mission,
-          _uid(a.loopUser),
-          _uid(a.suit),
-        );
+        final trajectory = _Trajectory(a.trajectory, a.mission, entry, (
+          loopUser: a.loopUser,
+          suit: a.suit,
+        ));
         _trajectories[a.trajectory] = trajectory;
         _trajectoryOf[entry] = trajectory;
+      }
+    } else if (OwnershipKind.of(kind) == OwnershipKind.usersAssignedUids) {
+      // The first one for an assignment holds; any later one changes nothing.
+      if (_UsersAssignedUids.parse(body) case final uids?) {
+        if (_trajectoryOf[uids.assignment] case final trajectory?
+            when trajectory.assignment == uids.assignment &&
+                !trajectory.uidsRecorded) {
+          trajectory
+            ..loopUser = uids.loopUser
+            ..suit = uids.suit
+            ..uidsRecorded = true;
+        }
       }
     } else if (_attaching.contains(kind)) {
       if (_parentIn(body) case final parent?) {
@@ -485,7 +570,9 @@ final class LogbookService {
           _closedTrajectories.add(trajectory);
         }
         return true;
-      case OwnershipKind.usersAssignedToTrajectory || null:
+      case OwnershipKind.usersAssignedToTrajectory ||
+          OwnershipKind.usersAssignedUids ||
+          null:
         return false;
     }
   }
@@ -513,7 +600,10 @@ final class LogbookService {
         _TrajectoryId.trajectoryClosedIn(body) == null
             ? 'trajectory-closed-body'
             : null,
-      OwnershipKind.usersAssignedToTrajectory || null => null,
+      // No sender may send a `users-assigned-uids`: the table refuses it.
+      OwnershipKind.usersAssignedToTrajectory ||
+      OwnershipKind.usersAssignedUids ||
+      null => null,
     };
     if (unreadableBody != null) return unreadableBody;
     final assigns = ownership == OwnershipKind.usersAssignedToTrajectory;
@@ -655,6 +745,10 @@ final class LogbookService {
     }
     try {
       _added(logbook.addEntry(request), header, request);
+      if (OwnershipKind.of(header.kind) ==
+          OwnershipKind.usersAssignedToTrajectory) {
+        _recordUids(entry);
+      }
       return 'ok ${entry.hex}';
     } on FileSystemException catch (e) {
       // The entry may be in even though the add failed: read the chains
@@ -976,12 +1070,64 @@ Object? _json(Uint8List body) {
 /// user that wears its suit. A user that could not be found is null, and
 /// matches no sender.
 final class _Trajectory {
-  _Trajectory(this.id, this.mission, this.loopUser, this.suit);
+  _Trajectory(this.id, this.mission, this.assignment, this.names);
 
   final _TrajectoryId id;
   final _MissionId mission;
-  final UserId? loopUser;
-  final UserId? suit;
+
+  /// The `users-assigned-to-trajectory` entry that roots its chain.
+  final ObjectId assignment;
+
+  /// Its two users as that entry names them.
+  final ({String loopUser, String suit}) names;
+
+  /// Its two users' uids: as its `users-assigned-uids` records them once
+  /// [uidsRecorded], or else as they were last looked up.
+  UserId? loopUser;
+  UserId? suit;
+
+  /// Whether a `users-assigned-uids` gave [loopUser] and [suit].
+  var uidsRecorded = false;
+}
+
+/// A `users-assigned-uids` entry's body, which the service writes itself:
+/// exactly `{"assignment","loopUser","suit"}`, the assignment's id in
+/// lower-case hex and the two uids as numbers.
+final class _UsersAssignedUids {
+  _UsersAssignedUids(this.assignment, this.loopUser, this.suit);
+
+  final ObjectId assignment;
+  final UserId loopUser;
+  final UserId suit;
+
+  Uint8List encode() => utf8.encode(
+    jsonEncode({
+      'assignment': assignment.hex,
+      'loopUser': loopUser.number,
+      'suit': suit.number,
+    }),
+  );
+
+  static _UsersAssignedUids? parse(Uint8List body) {
+    final json = _json(body);
+    if (json
+        case {
+          'assignment': final String assignment,
+          'loopUser': final int loopUser,
+          'suit': final int suit,
+        }
+        when json.length == 3) {
+      return switch ((
+        ObjectId.parse(assignment),
+        UserId.parse(loopUser),
+        UserId.parse(suit),
+      )) {
+        (final a?, final l?, final s?) => _UsersAssignedUids(a, l, s),
+        _ => null,
+      };
+    }
+    return null;
+  }
 }
 
 /// A `users-assigned-to-trajectory` entry's body, read strictly: exactly

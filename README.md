@@ -220,6 +220,17 @@ nothing:
   (`mission-ended <mission>`), a user it cannot find (`no-user`), and a user
   an open trajectory already holds, as either its loop user or its suit
   (`in-use`). A trajectory's two users are never the same user.
+- `users-assigned-uids` is written by the service itself, never by a
+  sender: a sender table that names it is refused. Straight after it accepts
+  a `users-assigned-to-trajectory`, the service adds one as a root of its own
+  (previous `-`), so the assignment stays its chain's tip. Its body is
+  exactly `{"assignment","loopUser","suit"}`: the assignment's id in
+  lower-case hex and the two uids it found, as numbers. A restart takes the
+  users from it and never looks them up again, so renumbering or removing
+  a user doesn't change who owns a trajectory. At each start, every open
+  trajectory without one (assigned before 0.6, or whose
+  `users-assigned-uids` a crash lost) gets one with its users as they're
+  found then. Only the first one for an assignment counts.
 - `mission-ended` closes a mission: every chain whose
   `users-assigned-to-trajectory` names that mission, and every chain
   attached to one, refuses further entries
