@@ -60,12 +60,26 @@ export 'package:is_logbook_format/is_logbook_format.dart' show Kind;
 export 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart'
     show SocketUserReader, UserId;
 
-/// The kinds the service reads a body of, which never attach.
-final _serviceReadsBody = {
-  Kind.usersAssignedToTrajectory,
-  Kind.missionEnded,
-  Kind.trajectoryClosed,
-};
+/// The kinds that decide who owns a chain: the only kinds whose body the
+/// service reads, and none of them can attach. Every other kind is plain to
+/// this release, so a sender table naming another release's ownership kind
+/// starts fine and silently owns nothing; `bin/ownership_kinds.dart` prints
+/// these so a deploy can refuse that table.
+enum OwnershipKind {
+  usersAssignedToTrajectory,
+  missionEnded,
+  trajectoryClosed;
+
+  Kind get kind => switch (this) {
+    usersAssignedToTrajectory => Kind.usersAssignedToTrajectory,
+    missionEnded => Kind.missionEnded,
+    trajectoryClosed => Kind.trajectoryClosed,
+  };
+
+  /// [kind] as an ownership kind; null when it is a plain kind.
+  static OwnershipKind? of(Kind kind) =>
+      values.where((o) => o.kind == kind).firstOrNull;
+}
 
 /// Which kinds each user may send: a line per user, the user's name or id
 /// and then the kinds, separated by spaces. Blank lines and lines starting
@@ -110,7 +124,7 @@ final class SenderTable {
       if (words.first == _attachingLabel) {
         for (final word in words.skip(1)) {
           final kind = Kind.parse(word);
-          if (kind == null || _serviceReadsBody.contains(kind)) {
+          if (kind == null || OwnershipKind.of(kind) != null) {
             throw FormatException('line ${n + 1}: $word cannot attach');
           }
           attaching.add(kind);
@@ -144,7 +158,7 @@ final class SenderTable {
       ])
         for (final word in words)
           if (Kind.parse(word) case final kind?
-              when !_serviceReadsBody.contains(kind))
+              when OwnershipKind.of(kind) == null)
             kind,
   };
 
@@ -436,7 +450,8 @@ final class LogbookService {
       _lastStarted = entry;
     } else if (header.previous != null) {
       return;
-    } else if (kind == Kind.usersAssignedToTrajectory) {
+    } else if (OwnershipKind.of(kind) ==
+        OwnershipKind.usersAssignedToTrajectory) {
       if (_UsersAssigned.parse(body) case final a?) {
         final trajectory = _Trajectory(
           a.trajectory,
@@ -459,19 +474,20 @@ final class LogbookService {
   /// Closes what a `mission-ended` or `trajectory-closed` with [body] names.
   /// Whether [kind] is one of them.
   bool _close(Kind kind, Uint8List body) {
-    if (kind == Kind.missionEnded) {
-      if (_MissionId.missionEndedIn(body) case final mission?) {
-        _endedMissions.add(mission);
-      }
-      return true;
+    switch (OwnershipKind.of(kind)) {
+      case OwnershipKind.missionEnded:
+        if (_MissionId.missionEndedIn(body) case final mission?) {
+          _endedMissions.add(mission);
+        }
+        return true;
+      case OwnershipKind.trajectoryClosed:
+        if (_TrajectoryId.trajectoryClosedIn(body) case final trajectory?) {
+          _closedTrajectories.add(trajectory);
+        }
+        return true;
+      case OwnershipKind.usersAssignedToTrajectory || null:
+        return false;
     }
-    if (kind == Kind.trajectoryClosed) {
-      if (_TrajectoryId.trajectoryClosedIn(body) case final trajectory?) {
-        _closedTrajectories.add(trajectory);
-      }
-      return true;
-    }
-    return false;
   }
 
   /// Why [header], sent by [user], breaks a trajectory's ownership; null when it
@@ -489,20 +505,23 @@ final class LogbookService {
       _ => null,
     };
 
-    if (kind == Kind.missionEnded && _MissionId.missionEndedIn(body) == null) {
-      return 'mission-ended-body';
-    }
-    if (kind == Kind.trajectoryClosed &&
-        _TrajectoryId.trajectoryClosedIn(body) == null) {
-      return 'trajectory-closed-body';
-    }
+    final ownership = OwnershipKind.of(kind);
+    final unreadableBody = switch (ownership) {
+      OwnershipKind.missionEnded =>
+        _MissionId.missionEndedIn(body) == null ? 'mission-ended-body' : null,
+      OwnershipKind.trajectoryClosed =>
+        _TrajectoryId.trajectoryClosedIn(body) == null
+            ? 'trajectory-closed-body'
+            : null,
+      OwnershipKind.usersAssignedToTrajectory || null => null,
+    };
+    if (unreadableBody != null) return unreadableBody;
+    final assigns = ownership == OwnershipKind.usersAssignedToTrajectory;
     if (header.previous case final previous?) {
-      if (kind == Kind.usersAssignedToTrajectory) {
-        return 'users-assigned-not-root';
-      }
+      if (assigns) return 'users-assigned-not-root';
       return owned(_trajectoryOf[_chainOf[previous]]);
     }
-    if (kind == Kind.usersAssignedToTrajectory) {
+    if (assigns) {
       return _refuseUsersAssigned(body);
     }
     if (!_attaching.contains(kind)) return null;
